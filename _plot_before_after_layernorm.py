@@ -12,6 +12,7 @@ with app.setup:
     from datasets import load_dataset
     import marimo as mo
     import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm
     import torch
     from transformers import EsmTokenizer, EsmForMaskedLM
     from Bio import SeqIO
@@ -160,9 +161,9 @@ def _(
 @app.cell
 def _(activations):
     n_layers = len(activations)
-    n_cols = 3
+    n_cols = 2
     n_rows = (n_layers + n_cols - 1) // n_cols
-    figsize = (5.1 * n_cols, 4.0 * n_rows)
+    figsize = (5.5 * n_cols, 4.2 * n_rows)
     fig, ax = plt.subplots(
         n_rows, n_cols, figsize=figsize, constrained_layout=True
     )
@@ -173,13 +174,21 @@ def _(activations):
         after_tensors = activations[_name]["after"]
 
         # Concatenate all proteins' activation tensors (which may have different lengths)
-        before_flat = torch.cat([t.flatten() for t in before_tensors])
-        after_flat = torch.cat([t.flatten() for t in after_tensors])
+        before_flat = torch.cat([t.flatten() for t in before_tensors]).numpy()
+        after_flat = torch.cat([t.flatten() for t in after_tensors]).numpy()
 
         curr_ax = axes[i]
-        curr_ax.scatter(
-            before_flat, after_flat, alpha=0.3, s=2, color="indigo"
+        # Use hist2d with LogNorm for fast, high-density visualization
+        h = curr_ax.hist2d(
+            before_flat,
+            after_flat,
+            bins=100,
+            norm=LogNorm(),
+            cmap="viridis"
         )
+    
+        # Add colorbar for each layer's heatmap
+        fig.colorbar(h[3], ax=curr_ax, fraction=0.046, pad=0.04)
 
         # Clean name for title to make it readable
         clean_name = (
