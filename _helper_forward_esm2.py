@@ -4,14 +4,48 @@ __generated_with = "0.23.11"
 app = marimo.App(width="medium")
 
 with app.setup:
+    import subprocess
+    import sys
+    import importlib
+    import marimo as mo
+
+    is_local_venv = sys.prefix != sys.base_prefix
+    mo.stop(
+        is_local_venv,
+        mo.md(
+            "🛑 **Local environment detected.** Skipping cloud dependency installation."
+        ),
+    )
+
+    # 1. Install accelerate directly to the active server environment
+    print("Installing accelerate...")
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "accelerate>=1.1.0"]
+    )
+
+    # 2. The Nuclear Option: Erase transformers from Python's active memory
+    print("Wiping cached imports...")
+    for module_name in list(sys.modules.keys()):
+        if module_name.startswith("transformers") or module_name.startswith(
+            "accelerate"
+        ):
+            del sys.modules[module_name]
+
+    importlib.invalidate_caches()
+    print("Success! It is now safe to run your training cell.")
+
+
+@app.cell
+def _():
     import os
     import gzip
     import shutil
     import urllib.request
     import random
     from datasets import load_dataset
+    import json
+    import matplotlib.pyplot as plt
 
-    import marimo as mo
     import torch
     from torch.utils.data import IterableDataset
     from transformers import (
@@ -24,15 +58,35 @@ with app.setup:
     )
     from Bio import SeqIO
 
+    return (
+        DataCollatorForLanguageModeling,
+        EsmForMaskedLM,
+        EsmTokenizer,
+        IterableDataset,
+        Trainer,
+        TrainingArguments,
+        json,
+        load_dataset,
+        plt,
+        random,
+        torch,
+    )
+
 
 @app.cell
-def _():
+def _(torch):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return (device,)
 
 
 @app.cell
 def _(device):
+    print("Device used: ", device)
+    return
+
+
+@app.cell
+def _(EsmForMaskedLM, EsmTokenizer, device):
     model_name = "facebook/esm2_t6_8M_UR50D"
     tokenizer = EsmTokenizer.from_pretrained(model_name)
     model = EsmForMaskedLM.from_pretrained(model_name)
@@ -44,12 +98,11 @@ def _(device):
 
 
 @app.cell
-def _(test_ratio):
+def _(IterableDataset, load_dataset, random):
     class StreamingUniRefDataset(IterableDataset):
         def __init__(self, tokenizer, split="train", max_length=1024, seed=1):
             self.tokenizer = tokenizer
             self.split = split
-            self.test_ratio = test_ratio
             self.max_length = max_length
             self.seed = seed
             self.uniref_ds = load_dataset(
@@ -96,7 +149,29 @@ def _(StreamingUniRefDataset, tokenizer):
 
 
 @app.cell
-def _(eval_dataset, model, tokenizer, train_dataset):
+def _():
+    train_og_button = mo.ui.run_button(label="Train!!!")
+    return (train_og_button,)
+
+
+@app.cell
+def _(train_og_button):
+    train_og_button
+    return
+
+
+@app.cell
+def _(
+    DataCollatorForLanguageModeling,
+    Trainer,
+    TrainingArguments,
+    eval_dataset,
+    model,
+    tokenizer,
+    train_dataset,
+    train_og_button,
+):
+    mo.stop(not train_og_button.value)
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=True, mlm_probability=0.15
     )
@@ -104,7 +179,7 @@ def _(eval_dataset, model, tokenizer, train_dataset):
     # 6. Strict Hyperparameters for valid comparison
     training_args = TrainingArguments(
         output_dir="./esm2_comparison_run",
-        max_steps=10,  # Fixed step limit ensures identical exposure to data
+        max_steps=101,  # Fixed step limit ensures identical exposure to data
         per_device_train_batch_size=2,
         per_device_eval_batch_size=2,
         gradient_accumulation_steps=16,
@@ -112,9 +187,9 @@ def _(eval_dataset, model, tokenizer, train_dataset):
         save_total_limit=2,
         # Evaluation strategy settings
         eval_strategy="steps",  # Required for streaming iterable datasets
-        eval_steps=1,  # Calculates validation loss every 1000 steps
-        logging_steps=1,
-        save_steps=1,
+        eval_steps=100,  # Calculates validation loss every 1000 steps
+        logging_steps=2,
+        save_steps=100,
         learning_rate=4e-4,
         weight_decay=0.01,
         fp16=True,
@@ -133,6 +208,45 @@ def _(eval_dataset, model, tokenizer, train_dataset):
 
     # Start execution
     trainer.train()
+    return
+
+
+@app.cell
+def _(json):
+    state_file = "./esm2_comparison_run/checkpoint-100/trainer_state.json"
+
+    with open(state_file, "r") as f:
+        state_data = json.load(f)
+
+    # Extract steps and loss values from the log history
+    log_history = state_data["log_history"]
+
+    # Separate training loss and evaluation loss
+    train_steps = [log["step"] for log in log_history if "loss" in log]
+    train_loss = [log["loss"] for log in log_history if "loss" in log]
+
+    eval_steps = [log["step"] for log in log_history if "eval_loss" in log]
+    eval_loss = [log["eval_loss"] for log in log_history if "eval_loss" in log]
+    return eval_loss, eval_steps, train_loss, train_steps
+
+
+@app.cell
+def _(eval_loss, eval_steps, plt, train_loss, train_steps):
+    sizef = 14
+    plt.plot(
+        train_steps,
+        train_loss,
+        label="Training Loss",
+        color="blue",
+        marker="o",
+    )
+    plt.plot(
+        eval_steps, eval_loss, label="Evaluation Loss", color="red", marker="x"
+    )
+    plt.xlabel("Training Steps", fontsize=sizef)
+    plt.ylabel("Loss", fontsize=sizef)
+    plt.legend(fontsize=sizef)
+    plt.show()
     return
 
 
