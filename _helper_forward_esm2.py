@@ -60,7 +60,6 @@ def _():
 
     return (
         DataCollatorForLanguageModeling,
-        EsmConfig,
         EsmForMaskedLM,
         EsmTokenizer,
         IterableDataset,
@@ -87,12 +86,13 @@ def _(device):
 
 
 @app.cell
-def _(EsmConfig, EsmForMaskedLM, EsmTokenizer, device):
+def _(EsmForMaskedLM, EsmTokenizer, device):
     model_name = "facebook/esm2_t6_8M_UR50D"
     tokenizer = EsmTokenizer.from_pretrained(model_name)
-    config = EsmConfig.from_pretrained(model_name) # Load ONLY the architectural blueprint
-    model = EsmForMaskedLM(config) # Build a fresh model from the blueprint
+    model = EsmForMaskedLM.from_pretrained(model_name)
 
+    # Send to device in eval mode
+    model.init_weights()
     model.to(device)
     model.eval()
     return model, tokenizer
