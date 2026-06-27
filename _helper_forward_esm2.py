@@ -38,6 +38,7 @@ with app.setup:
 @app.cell
 def _():
     import os
+    import copy
     import gzip
     import shutil
     import urllib.request
@@ -47,6 +48,7 @@ def _():
     import matplotlib.pyplot as plt
 
     import torch
+    import torch.nn as nn
     from torch.utils.data import IterableDataset
     from transformers import (
         EsmTokenizer,
@@ -59,14 +61,14 @@ def _():
     from Bio import SeqIO
 
     return (
-        DataCollatorForLanguageModeling,
+        EsmConfig,
         EsmForMaskedLM,
         EsmTokenizer,
         IterableDataset,
-        Trainer,
-        TrainingArguments,
+        copy,
         json,
         load_dataset,
+        nn,
         plt,
         random,
         torch,
@@ -86,16 +88,72 @@ def _(device):
 
 
 @app.cell
-def _(EsmForMaskedLM, EsmTokenizer, device):
+def _(EsmConfig, EsmForMaskedLM, EsmTokenizer, device):
     model_name = "facebook/esm2_t6_8M_UR50D"
+    # model_name = "facebook/esm2_t12_35M_UR50D"
     tokenizer = EsmTokenizer.from_pretrained(model_name)
-    model = EsmForMaskedLM.from_pretrained(model_name)
+
+    # the opretrained model
+    # model = EsmForMaskedLM.from_pretrained(model_name)
+
+    # Load the model sceleton with random weights
+    config = EsmConfig.from_pretrained(model_name)
+    model = EsmForMaskedLM(config)
 
     # Send to device in eval mode
-    model.init_weights()
     model.to(device)
     model.eval()
     return model, tokenizer
+
+
+@app.cell
+def _(model):
+    model.esm.encoder.layer[0].attention.self.query.weight
+    return
+
+
+@app.cell
+def _(nn, torch):
+    class DyT(nn.Module):
+        def __init__(self, num_features, alpha_init_value=0.5):
+            super().__init__()
+            self.alpha = nn.Parameter(torch.ones(1) * alpha_init_value)
+            self.weight = nn.Parameter(torch.ones(num_features))
+            self.bias = nn.Parameter(torch.zeros(num_features))
+
+        def forward(self, x):
+            x = torch.tanh(self.alpha * x)
+            return x * self.weight + self.bias
+
+    def replace_layernorm_with_dyt(module):
+        """
+        Recursively searches a PyTorch model for nn.LayerNorm modules
+        and replaces them with the custom DyT layer.
+        """
+        for name, child in module.named_children():
+            # If the child is a LayerNorm, replace it
+            if isinstance(child, nn.LayerNorm):
+                # ESM2 LayerNorms use a tuple for normalized_shape, e.g., (320,)
+                # We extract the integer size to pass to your num_features
+                num_features = child.normalized_shape[0]
+
+                # Create your custom layer and swap it in
+                custom_layer = DyT(num_features=num_features)
+                setattr(module, name, custom_layer)
+            else:
+                # If it's not a LayerNorm, dig deeper into this child
+                replace_layernorm_with_dyt(child)
+
+    return (replace_layernorm_with_dyt,)
+
+
+@app.cell
+def _(copy, device, model, replace_layernorm_with_dyt):
+    model_new = copy.deepcopy(model)
+    replace_layernorm_with_dyt(model_new)
+    model_new.to(device)
+    model_new.eval()
+    return
 
 
 @app.cell
@@ -133,7 +191,9 @@ def _(IterableDataset, load_dataset, random):
 
 @app.cell
 def _(StreamingUniRefDataset, tokenizer):
-    max_length = 100  # Limit sequences to 100 amino acids for faster training
+    max_length = (
+        8 * 64
+    )  # Limit sequences to 100 amino acids for faster training
     train_dataset = StreamingUniRefDataset(
         tokenizer=tokenizer,
         split="train",
@@ -146,7 +206,7 @@ def _(StreamingUniRefDataset, tokenizer):
         split="test",
         max_length=max_length,
     )
-    return eval_dataset, train_dataset
+    return
 
 
 @app.cell
@@ -161,17 +221,8 @@ def _(train_og_button):
     return
 
 
-@app.cell
-def _(
-    DataCollatorForLanguageModeling,
-    Trainer,
-    TrainingArguments,
-    eval_dataset,
-    model,
-    tokenizer,
-    train_dataset,
-    train_og_button,
-):
+app._unparsable_cell(
+    r"""
     mo.stop(not train_og_button.value)
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=True, mlm_probability=0.15
@@ -181,21 +232,28 @@ def _(
     training_args = TrainingArguments(
         output_dir="./esm2_comparison_run",
         max_steps=101,  # Fixed step limit ensures identical exposure to data
-        per_device_train_batch_size=2,
-        per_device_eval_batch_size=2,
-        gradient_accumulation_steps=16,
-        # Disk Space Optimization
+
+        per_device_train_batch_size=64,
+        per_device_eval_batch_size=64,
+        gradient_accumulation_steps=1,
+
         save_total_limit=2,
-        # Evaluation strategy settings
         eval_strategy="steps",  # Required for streaming iterable datasets
         eval_steps=100,  # Calculates validation loss every 1000 steps
-        logging_steps=2,
-        save_steps=100,
-        learning_rate=4e-4,
+        logging_steps=1,
+        save_steps=100
+
+        gradient_checkpointing=False,
+        learning_rate=1e-4,
+        warmup_steps=10,
+        max_grad_norm=1.0,
         weight_decay=0.01,
-        fp16=True,
+        fp16=False,
+        bf16=True,
         seed=42,  # Keeps the Data Collator's random masking reproducible
         data_seed=42,
+
+        # torch_compile=True,
     )
 
     # 7. Initialize Trainer with both datasets
@@ -209,7 +267,9 @@ def _(
 
     # Start execution
     trainer.train()
-    return
+    """,
+    name="_"
+)
 
 
 @app.cell
