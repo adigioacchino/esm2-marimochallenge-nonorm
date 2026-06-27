@@ -101,8 +101,26 @@ def _(device, model, protein_sequence, tokenizer):
 
 
 @app.cell
-def _(activations):
-    activations
+def _():
+    import matplotlib.pyplot as plt
+
+    return (plt,)
+
+
+@app.cell
+def _(activations, plt):
+    n_layers = len(activations)
+    n_cols = 3
+    n_rows = int(n_layers/n_cols)
+    figsize = (5.1 * n_cols, 5.1 * n_rows ) 
+    fig, ax = plt.subplots(n_rows, n_cols, figsize = figsize, constrained_layout = True)
+
+    for i, _name in enumerate(activations.keys()):
+
+        before = activations[_name]["before"].numpy()
+        after = activations[_name]["after"].numpy()
+
+
     return
 
 
