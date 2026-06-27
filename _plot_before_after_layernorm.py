@@ -160,26 +160,55 @@ def _(
 
 @app.cell
 def _(activations):
-    n_layers = len(activations)
-    n_cols = 2
-    n_rows = (n_layers + n_cols - 1) // n_cols
-    figsize = (5.5 * n_cols, 4.2 * n_rows)
-    fig, ax = plt.subplots(
-        n_rows, n_cols, figsize=figsize, constrained_layout=True
-    )
-    axes = ax.flatten()
+    n_layers = int((len(activations) - 1)/2 + 1)
+    choose_layer = mo.ui.slider(start=0, stop=n_layers-1, step=1, value=0, show_value=True, full_width=True)
 
-    for i, _name in enumerate(activations.keys()):
+    return (choose_layer,)
+
+
+@app.cell
+def _(choose_layer):
+    mo.vstack([mo.md("Choose layer to plot"), choose_layer ])
+    return
+
+
+@app.cell
+def _(choose_layer):
+    selected_layer = int(choose_layer.value)
+    return (selected_layer,)
+
+
+@app.function
+@mo.cache
+def create_figure(activations, selected_layer):
+    _n_layers = (len(activations) - 1)/2 + 1
+    if selected_layer < _n_layers - 1:
+        selected_keys = [_ for _ in activations.keys() if str(selected_layer) in _]
+        n_cols = 2
+        figsize = (5.5 * n_cols, 4.2 )
+        fig, ax = plt.subplots(
+            1, n_cols, figsize=figsize, constrained_layout=True
+         )
+        axes = ax.flatten()
+    else:
+        selected_keys = [_ for _ in activations.keys() if "emb_layer_norm_after" in _]
+        n_cols=1
+        figsize = (5.5 * n_cols, 4.2 )
+        fig, ax = plt.subplots(
+            1, n_cols, figsize=figsize, constrained_layout=True
+         )
+        axes = [ax]
+    
+    for _name, ax in zip(selected_keys, axes):
         before_tensors = activations[_name]["before"]
         after_tensors = activations[_name]["after"]
-
+    
         # Concatenate all proteins' activation tensors (which may have different lengths)
         before_flat = torch.cat([t.flatten() for t in before_tensors]).numpy()
         after_flat = torch.cat([t.flatten() for t in after_tensors]).numpy()
-
-        curr_ax = axes[i]
+        
         # Use hist2d with LogNorm for fast, high-density visualization
-        h = curr_ax.hist2d(
+        h = ax.hist2d(
             before_flat,
             after_flat,
             bins=100,
@@ -188,24 +217,37 @@ def _(activations):
         )
     
         # Add colorbar for each layer's heatmap
-        fig.colorbar(h[3], ax=curr_ax, fraction=0.046, pad=0.04)
-
+        fig.colorbar(h[3], ax=ax, fraction=0.046, pad=0.04)
+    
         # Clean name for title to make it readable
         clean_name = (
             _name.replace("esm2.encoder.layer.", "Layer ")
             .replace(".attention.LayerNorm", " Attn LN")
             .replace(".LayerNorm", " LN")
         )
-        curr_ax.set_title(clean_name, fontsize=11, fontweight="bold")
-        curr_ax.set_xlabel("Before LayerNorm (Input)", fontsize=9)
-        curr_ax.set_ylabel("After LayerNorm (Output)", fontsize=9)
-        curr_ax.grid(True, linestyle="--", alpha=0.5)
+        ax.set_title(clean_name, fontsize=11, fontweight="bold")
+        ax.set_xlabel("Before LayerNorm (Input)", fontsize=9)
+        ax.set_ylabel("After LayerNorm (Output)", fontsize=9)
+        ax.grid(True, linestyle="--", alpha=0.5)
+    return fig
 
-    # Remove any unused subplot slots
-    for j in range(n_layers, len(axes)):
-        fig.delaxes(axes[j])
 
-    fig
+@app.cell
+def _(activations, selected_layer):
+    create_figure(activations, selected_layer)
+    return
+
+
+@app.cell
+def _():
+    # mo.accordion(
+    #     items={
+    #         f"Layer {_k}": create_figure(activations, _k)
+    #         for _k in range(n_layers)
+    #     },
+    #     multiple=True,
+    #     lazy=True,
+    # )
     return
 
 
