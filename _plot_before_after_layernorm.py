@@ -23,6 +23,23 @@ with app.setup:
 
 @app.cell
 def _():
+    mo.md("""
+    # <center>  **Transformers without Normalization** </center>
+    ## <center> Application to the ESM protein model </center>
+    ---
+    A wise man once said _"**Attention** is all you need!"_, but he probably forgot to add an important information:
+
+    > <center> _"**Attention**, <ins>with proper normalization</ins>, is all you need!"_ </center>
+
+    But what is Normalization? if you've ever bumped on a youtube video about LLM, You would already know that these powerful tool are composed as chains of arcane objects called _transformers_ which are able to recognize statistical interaction between distant token (aka letters/words etc.) in the input phrase.
+
+    Transformers are truly amazing object, but they have one small Achilles' heel: they tend to
+    """)
+    return
+
+
+@app.cell
+def _():
     #UI objects
     choose_model = mo.ui.dropdown(
         options=["facebook/esm2_t30_150M_UR50D","facebook/esm2_t12_35M_UR50D", "facebook/esm2_t6_8M_UR50D"],
@@ -162,7 +179,6 @@ def _(
 def _(activations):
     n_layers = int((len(activations) - 1)/2 + 1)
     choose_layer = mo.ui.slider(start=0, stop=n_layers-1, step=1, value=0, show_value=True, full_width=True)
-
     return (choose_layer,)
 
 
@@ -198,15 +214,15 @@ def create_figure(activations, selected_layer):
             1, n_cols, figsize=figsize, constrained_layout=True
          )
         axes = [ax]
-    
+
     for _name, ax in zip(selected_keys, axes):
         before_tensors = activations[_name]["before"]
         after_tensors = activations[_name]["after"]
-    
+
         # Concatenate all proteins' activation tensors (which may have different lengths)
         before_flat = torch.cat([t.flatten() for t in before_tensors]).numpy()
         after_flat = torch.cat([t.flatten() for t in after_tensors]).numpy()
-        
+
         # Use hist2d with LogNorm for fast, high-density visualization
         h = ax.hist2d(
             before_flat,
@@ -215,10 +231,10 @@ def create_figure(activations, selected_layer):
             norm=LogNorm(),
             cmap="viridis"
         )
-    
+
         # Add colorbar for each layer's heatmap
         fig.colorbar(h[3], ax=ax, fraction=0.046, pad=0.04)
-    
+
         # Clean name for title to make it readable
         clean_name = (
             _name.replace("esm2.encoder.layer.", "Layer ")
