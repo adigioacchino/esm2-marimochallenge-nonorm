@@ -9,7 +9,9 @@ with app.setup:
     import shutil
     import urllib.request
 
+    from datasets import load_dataset
     import marimo as mo
+    import matplotlib.pyplot as plt
     import torch
     from transformers import EsmTokenizer, EsmForMaskedLM
     from Bio import SeqIO
@@ -27,100 +29,121 @@ def _():
 
 @app.cell
 def _():
-    # Download uniref50
-    if not os.path.exists("data/uniref50.fasta.gz"):
-        _url = "https://ftp.uniprot.org/pub/databases/uniprot/current_release/uniref/uniref50/uniref50.fasta.gz"
+    # Get uniref50 from HF in streaming mode
+    uniref_ds = load_dataset(
+        "agemagician/uniref30", split="train", streaming=True
+    ).shuffle(seed=1)
+    return (uniref_ds,)
 
-        print("Starting download of UniRef50 (approx. 7-9 GB compressed)...")
 
-        _outdir = "data"
-        if not os.path.exists(_outdir):
-            os.makedirs(_outdir)
-
-        with (
-            urllib.request.urlopen(_url) as _response,
-            open(os.path.join(_outdir, "uniref50.fasta.gz"), "wb") as _out_file,
-        ):
-            shutil.copyfileobj(_response, _out_file)
-
-        print("\nDownload complete!")
-    else:
-        print("UniRef50 already exists. Skipping download.")
-    return
+@app.function
+def sample_sequences(dataset, num_seqs: int, len_down: int, len_up: int):
+    results = []
+    for x in dataset:
+        seq = x["text"]
+        L = len(seq)
+        if L >= len_down and L <= len_up:
+            results.append(seq)
+        if len(results) >= num_seqs:
+            break
+    return results
 
 
 @app.cell
-def _():
-    # Dummy protein sequence: first from UniRef50
-    with gzip.open("data/uniref50.fasta.gz", "rt") as handle:
-        for record in SeqIO.parse(handle, "fasta"):
-            protein_sequence = str(record.seq)
-            if len(protein_sequence) < 100:
-                break  # Get only the first sequence with length < 100
-    return (protein_sequence,)
+def _(uniref_ds):
+    # Example protein sequences from UniRef
+    protein_sequences = sample_sequences(uniref_ds, num_seqs=5, len_down=100, len_up=200)
+    return (protein_sequences,)
 
 
 @app.cell
-def _(device):
-    # Load ESM2 model
-    model_name = "facebook/esm2_t6_8M_UR50D"
+def _(device, protein_sequences):
+    # Load the ESM-2 model and tokenizer
+    model_name = "facebook/esm2_t12_35M_UR50D"
     tokenizer = EsmTokenizer.from_pretrained(model_name)
     model = EsmForMaskedLM.from_pretrained(model_name)
 
     # Send to device in eval mode
     model.to(device)
     model.eval()
-    return model, tokenizer
 
+    # Create a dictionary to store pre- and post-norm activations
+    def norm_hook(layer_name, activation_dict):
+        def hook(
+            module,
+            inputs,
+            output,
+        ):
+            if layer_name in activation_dict:
+                _before = activation_dict[layer_name]["before"]
+                _after = activation_dict[layer_name]["after"]
+                activation_dict[layer_name] = {
+                    "before": _before + [inputs[0].detach().cpu()],
+                    "after": _after + [output.detach().cpu()],
+                }
+            else:
+                activation_dict[layer_name] = {
+                    "before": [inputs[0].detach().cpu()],
+                    "after": [output.detach().cpu()],
+                }
 
-@app.cell
-def _(model):
-    activations = {}
-
-    def norm_hook(name):
-        def hook(module, inputs, output):
-            activations[name] = {
-                "before": inputs[0].detach().cpu(),
-                "after": output.detach().cpu()
-            }
         return hook
 
-    for name, module in model.named_modules():
-        if isinstance(module, nn.LayerNorm):
-            module.register_forward_hook(norm_hook(name))
+    activations = {}
+    for _name, _module in model.named_modules():
+        if isinstance(_module, nn.LayerNorm) and "lm_head" not in _name:
+            _module.register_forward_hook(norm_hook(_name, activations))
+
+    # Forward pass through the model
+    with torch.inference_mode():
+        for _protein_sequence in protein_sequences:
+            _input = tokenizer(_protein_sequence, return_tensors="pt").to(
+                device
+            )
+            model(_input["input_ids"])
     return (activations,)
 
 
 @app.cell
-def _(device, model, protein_sequence, tokenizer):
-    # Forward pass through the model
-    with torch.inference_mode():
-        _input = tokenizer(protein_sequence, return_tensors="pt").to(device)
-        embedding = model(_input["input_ids"], output_hidden_states=True)
-    return
-
-
-@app.cell
-def _():
-    import matplotlib.pyplot as plt
-
-    return (plt,)
-
-
-@app.cell
-def _(activations, plt):
+def _(activations):
     n_layers = len(activations)
     n_cols = 3
-    n_rows = int(n_layers/n_cols)
-    figsize = (5.1 * n_cols, 5.1 * n_rows ) 
-    fig, ax = plt.subplots(n_rows, n_cols, figsize = figsize, constrained_layout = True)
+    n_rows = (n_layers + n_cols - 1) // n_cols
+    figsize = (5.1 * n_cols, 4.0 * n_rows)
+    fig, ax = plt.subplots(
+        n_rows, n_cols, figsize=figsize, constrained_layout=True
+    )
+    axes = ax.flatten()
 
     for i, _name in enumerate(activations.keys()):
+        before_tensors = activations[_name]["before"]
+        after_tensors = activations[_name]["after"]
 
-        before = activations[_name]["before"].numpy()
-        after = activations[_name]["after"].numpy()
+        # Concatenate all proteins' activation tensors (which may have different lengths)
+        before_flat = torch.cat([t.flatten() for t in before_tensors])
+        after_flat = torch.cat([t.flatten() for t in after_tensors])
 
+        curr_ax = axes[i]
+        curr_ax.scatter(
+            before_flat, after_flat, alpha=0.3, s=2, color="indigo"
+        )
 
+        # Clean name for title to make it readable
+        clean_name = (
+            _name.replace("esm2.encoder.layer.", "Layer ")
+            .replace(".attention.LayerNorm", " Attn LN")
+            .replace(".LayerNorm", " LN")
+        )
+        curr_ax.set_title(clean_name, fontsize=11, fontweight="bold")
+        curr_ax.set_xlabel("Before LayerNorm (Input)", fontsize=9)
+        curr_ax.set_ylabel("After LayerNorm (Output)", fontsize=9)
+        curr_ax.grid(True, linestyle="--", alpha=0.5)
+
+    # Remove any unused subplot slots
+    for j in range(n_layers, len(axes)):
+        fig.delaxes(axes[j])
+
+    fig
     return
 
 
