@@ -60,6 +60,7 @@ def _():
 
     return (
         DataCollatorForLanguageModeling,
+        EsmConfig,
         EsmForMaskedLM,
         EsmTokenizer,
         IterableDataset,
@@ -86,12 +87,12 @@ def _(device):
 
 
 @app.cell
-def _(EsmForMaskedLM, EsmTokenizer, device):
+def _(EsmConfig, EsmForMaskedLM, EsmTokenizer, device):
     model_name = "facebook/esm2_t6_8M_UR50D"
     tokenizer = EsmTokenizer.from_pretrained(model_name)
-    model = EsmForMaskedLM.from_pretrained(model_name)
+    config = EsmConfig.from_pretrained(model_name) # Load ONLY the architectural blueprint
+    model = EsmForMaskedLM(config) # Build a fresh model from the blueprint
 
-    # Send to device in eval mode
     model.to(device)
     model.eval()
     return model, tokenizer
@@ -150,7 +151,7 @@ def _(StreamingUniRefDataset, tokenizer):
 
 @app.cell
 def _():
-    train_og_button = mo.ui.run_button(label="Train!!!")
+    train_og_button = mo.ui.run_button(label="Train original model")
     return (train_og_button,)
 
 
