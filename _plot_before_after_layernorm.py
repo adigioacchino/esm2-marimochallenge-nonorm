@@ -22,6 +22,48 @@ with app.setup:
 
 @app.cell
 def _():
+    #UI objects
+    choose_model = mo.ui.dropdown(
+        options=["facebook/esm2_t30_150M_UR50D","facebook/esm2_t12_35M_UR50D", "facebook/esm2_t6_8M_UR50D"],
+        value="facebook/esm2_t6_8M_UR50D",
+    )
+
+    choose_num_seqs = mo.ui.number(start=1, step=1, value=10)
+    choose_len_down = mo.ui.number(start=1, step=1, value=100)
+    choose_len_up = mo.ui.number(start=1, step=1, value=300)
+
+    run_button = mo.ui.run_button(label = "Run Transformer")
+    return (
+        choose_len_down,
+        choose_len_up,
+        choose_model,
+        choose_num_seqs,
+        run_button,
+    )
+
+
+@app.cell
+def _(
+    choose_len_down,
+    choose_len_up,
+    choose_model,
+    choose_num_seqs,
+    run_button,
+):
+    mo.hstack(
+        [
+            mo.vstack([mo.md("Model selection"), choose_model]),
+            mo.vstack([mo.md("Number of Sequences"), choose_num_seqs]),
+            mo.vstack([mo.md("Min Length"), choose_len_down]),
+            mo.vstack([mo.md("Max Length"), choose_len_up]),
+            run_button
+        ]
+    )
+    return
+
+
+@app.cell
+def _():
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return (device,)
@@ -50,16 +92,27 @@ def sample_sequences(dataset, num_seqs: int, len_down: int, len_up: int):
 
 
 @app.cell
-def _(uniref_ds):
+def _(
+    choose_len_down,
+    choose_len_up,
+    choose_model,
+    choose_num_seqs,
+    device,
+    run_button,
+    uniref_ds,
+):
+    mo.stop(not run_button.value)
+
     # Example protein sequences from UniRef
-    protein_sequences = sample_sequences(uniref_ds, num_seqs=5, len_down=100, len_up=200)
-    return (protein_sequences,)
+    protein_sequences = sample_sequences(
+        uniref_ds,
+        num_seqs=choose_num_seqs.value,
+        len_down=choose_len_down.value,
+        len_up=choose_len_up.value,
+    )
 
-
-@app.cell
-def _(device, protein_sequences):
     # Load the ESM-2 model and tokenizer
-    model_name = "facebook/esm2_t12_35M_UR50D"
+    model_name = choose_model.value
     tokenizer = EsmTokenizer.from_pretrained(model_name)
     model = EsmForMaskedLM.from_pretrained(model_name)
 
