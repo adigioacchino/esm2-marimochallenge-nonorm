@@ -1,0 +1,5 @@
+# Data folder
+data/
+
+# Marimo cache folder
+__marimo__/
