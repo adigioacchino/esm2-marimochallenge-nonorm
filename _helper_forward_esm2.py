@@ -9,13 +9,13 @@ with app.setup:
     import importlib
     import marimo as mo
 
-    is_local_venv = sys.prefix != sys.base_prefix
-    mo.stop(
-        is_local_venv,
-        mo.md(
-            "🛑 **Local environment detected.** Skipping cloud dependency installation."
-        ),
-    )
+    # is_local_venv = sys.prefix != sys.base_prefix
+    # mo.stop(
+    #     is_local_venv,
+    #     mo.md(
+    #         "🛑 **Local environment detected.** Skipping cloud dependency installation."
+    #     ),
+    # )
 
     # 1. Install accelerate directly to the active server environment
     print("Installing accelerate...")
@@ -241,7 +241,7 @@ app._unparsable_cell(
         eval_strategy="steps",  # Required for streaming iterable datasets
         eval_steps=100,  # Calculates validation loss every 1000 steps
         logging_steps=1,
-        save_steps=100
+        save_steps=100,
 
         gradient_checkpointing=False,
         learning_rate=1e-4,
