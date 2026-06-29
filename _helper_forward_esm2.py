@@ -78,6 +78,28 @@ def _():
     )
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    So let us now quickly demonstrate, that the LN normalization layer can indeed be simply repplaced by a DyT layer, comprising only of the nonlinear logistic function
+
+    $$
+    DyT(\boldsymbol{x}) = \boldsymbol{\gamma} * \tanh(\alpha\boldsymbol{x})+\boldsymbol{\beta},
+    $$
+
+    where $\boldsymbol{\gamma}$ and $\boldsymbol{\beta}$ are vectors of weigths with the dimension $|\boldsymbol{x}|$, and $\alpha$ a simple scalar. Now we will take the original model, and replace all the normalization layers with this $DyT$ layer, and train it from scratch. In order to make sure that our training is well done, we will also retrain the orignal model with standard LN normalizaiton layer.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    This is a considerably more chalenging computation, so we encurage the user to switch to the cuda kernel, offered by the **molab**. If the krnel was chosen succesfully, the next line should print out: " *Device used: 'cuda'* "
+    """)
+    return
+
+
 @app.cell
 def _(torch):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -90,16 +112,22 @@ def _(device):
     return
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Now that we checked that we are indeed using the 'cuda' kernel, we reload the orignal model, and initialise all the weights to random values.
+    """)
+    return
+
+
 @app.cell
 def _(EsmConfig, EsmForMaskedLM, EsmTokenizer, device):
-    model_name = "facebook/esm2_t6_8M_UR50D"
-    # model_name = "facebook/esm2_t12_35M_UR50D"
+    model_name = "facebook/esm2_t6_8M_UR50D" # this is a smaller model
+    # model_name = "facebook/esm2_t12_35M_UR50D" # this is a larger model
+
+    # the same tokenizer as before
     tokenizer = EsmTokenizer.from_pretrained(model_name)
-
-    # the pretrained model
-    # model = EsmForMaskedLM.from_pretrained(model_name)
-
-    # Load the model sceleton with random weights
+    # Now we load only the blueprint (sceleton) of the model, and put random weights
     config = EsmConfig.from_pretrained(model_name)
     model = EsmForMaskedLM(config)
 
@@ -109,10 +137,11 @@ def _(EsmConfig, EsmForMaskedLM, EsmTokenizer, device):
     return model, tokenizer
 
 
-@app.cell
-def _(model):
-    # print the weights in the first layer
-    model.esm.encoder.layer[0].attention.self.query.weight
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    In `pytorch` the layers can be easily replaced. First we define a new `DyT` layer class, and initialise the value of $\alpha_0=10.0$. The training is very sensitive to $\alpha_0$. Values like $\alpha_0=\{0.1, 0.5, 1.0\}$ significantly underperform the original model. Once the `DyT` class is constructed, we define a function that runs through all the layers, and replaces all instances of `nn.LayerNorm` by `DyT`. Here we have to make sure that the dimension of features stays the same.
+    """)
     return
 
 
@@ -158,6 +187,14 @@ def _(copy, device, model, replace_layernorm_with_dyt):
     model_new.to(device)
     model_new.eval()
     return (model_new,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Just as before, we load the data, in a format useful for the training.
+    """)
+    return
 
 
 @app.cell
@@ -211,6 +248,14 @@ def _(StreamingUniRefDataset, tokenizer):
         max_length=max_length,
     )
     return eval_dataset, train_dataset
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Now we can start the training. First of the original model, and then with the new model. In order to start the training press the button. Using the 'cuda' kernel offered by **molab* the training of each model should take about a minute. All the parameters, except for the learning rate were kept the same, while the learnign rate equals to 1e-4 in the model with LN and 4e-4 in the model with DyT.
+    """)
+    return
 
 
 @app.cell
@@ -350,6 +395,14 @@ def _(
 
     # Start execution
     trainer_new.train()
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Now we can visualise the Evaluation and Training loss along the optimization, and we see that both models reach the same precition. The precision reached is comparable to the precision of the original model, used in out analysis.
+    """)
     return
 
 
