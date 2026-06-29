@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.11"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -61,10 +61,13 @@ def _():
     from Bio import SeqIO
 
     return (
+        DataCollatorForLanguageModeling,
         EsmConfig,
         EsmForMaskedLM,
         EsmTokenizer,
         IterableDataset,
+        Trainer,
+        TrainingArguments,
         copy,
         json,
         load_dataset,
@@ -93,7 +96,7 @@ def _(EsmConfig, EsmForMaskedLM, EsmTokenizer, device):
     # model_name = "facebook/esm2_t12_35M_UR50D"
     tokenizer = EsmTokenizer.from_pretrained(model_name)
 
-    # the opretrained model
+    # the pretrained model
     # model = EsmForMaskedLM.from_pretrained(model_name)
 
     # Load the model sceleton with random weights
@@ -108,6 +111,7 @@ def _(EsmConfig, EsmForMaskedLM, EsmTokenizer, device):
 
 @app.cell
 def _(model):
+    # print the weights in the first layer
     model.esm.encoder.layer[0].attention.self.query.weight
     return
 
@@ -115,7 +119,7 @@ def _(model):
 @app.cell
 def _(nn, torch):
     class DyT(nn.Module):
-        def __init__(self, num_features, alpha_init_value=0.5):
+        def __init__(self, num_features, alpha_init_value=10.0):
             super().__init__()
             self.alpha = nn.Parameter(torch.ones(1) * alpha_init_value)
             self.weight = nn.Parameter(torch.ones(num_features))
@@ -153,7 +157,7 @@ def _(copy, device, model, replace_layernorm_with_dyt):
     replace_layernorm_with_dyt(model_new)
     model_new.to(device)
     model_new.eval()
-    return
+    return (model_new,)
 
 
 @app.cell
@@ -161,9 +165,9 @@ def _(IterableDataset, load_dataset, random):
     class StreamingUniRefDataset(IterableDataset):
         def __init__(self, tokenizer, split="train", max_length=1024, seed=1):
             self.tokenizer = tokenizer
-            self.split = split
-            self.max_length = max_length
-            self.seed = seed
+            self.split: str = split
+            self.max_length: int = max_length
+            self.seed: int = seed
             self.uniref_ds = load_dataset(
                 "agemagician/uniref30", split=split, streaming=True
             ).shuffle(seed=seed)
@@ -206,7 +210,7 @@ def _(StreamingUniRefDataset, tokenizer):
         split="test",
         max_length=max_length,
     )
-    return
+    return eval_dataset, train_dataset
 
 
 @app.cell
@@ -221,8 +225,17 @@ def _(train_og_button):
     return
 
 
-app._unparsable_cell(
-    r"""
+@app.cell
+def _(
+    DataCollatorForLanguageModeling,
+    Trainer,
+    TrainingArguments,
+    eval_dataset,
+    model,
+    tokenizer,
+    train_dataset,
+    train_og_button,
+):
     mo.stop(not train_og_button.value)
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=True, mlm_probability=0.15
@@ -267,9 +280,77 @@ app._unparsable_cell(
 
     # Start execution
     trainer.train()
-    """,
-    name="_"
-)
+    return
+
+
+@app.cell
+def _():
+    train_new_button = mo.ui.run_button(label="Train the new model")
+    return (train_new_button,)
+
+
+@app.cell
+def _(train_new_button):
+    train_new_button
+    return
+
+
+@app.cell
+def _(
+    DataCollatorForLanguageModeling,
+    Trainer,
+    TrainingArguments,
+    eval_dataset,
+    model_new,
+    tokenizer,
+    train_dataset,
+    train_new_button,
+):
+    mo.stop(not train_new_button.value)
+    data_collator_new = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer, mlm=True, mlm_probability=0.15
+    )
+
+    # 6. Strict Hyperparameters for valid comparison
+    training_args_new = TrainingArguments(
+        output_dir="./esm2_comparison_run_new",
+        max_steps=101,  # Fixed step limit ensures identical exposure to data
+
+        per_device_train_batch_size=64,
+        per_device_eval_batch_size=64,
+        gradient_accumulation_steps=1,
+
+        save_total_limit=2,
+        eval_strategy="steps",  # Required for streaming iterable datasets
+        eval_steps=100,  # Calculates validation loss every 1000 steps
+        logging_steps=1,
+        save_steps=100,
+
+        gradient_checkpointing=False,
+        learning_rate=4e-4,
+        warmup_steps=100,
+        max_grad_norm=1.0,
+        weight_decay=0.01,
+        fp16=False,
+        bf16=True,
+        seed=42,  # Keeps the Data Collator's random masking reproducible
+        data_seed=42,
+
+        # torch_compile=True,
+    )
+
+    # 7. Initialize Trainer with both datasets
+    trainer_new = Trainer(
+        model=model_new,
+        args=training_args_new,
+        data_collator=data_collator_new,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,  # The trainer will now compute validation loss strictly from the test split
+    )
+
+    # Start execution
+    trainer_new.train()
+    return
 
 
 @app.cell
@@ -292,19 +373,60 @@ def _(json):
 
 
 @app.cell
-def _(eval_loss, eval_steps, plt, train_loss, train_steps):
+def _(json):
+    state_file_new = "./esm2_comparison_run_new/checkpoint-100/trainer_state.json"
+
+    with open(state_file_new, "r") as f_new:
+        state_data_new = json.load(f_new)
+
+    # Extract steps and loss values from the log history
+    log_history_new = state_data_new["log_history"]
+
+    # Separate training loss and evaluation loss
+    train_steps_new = [log["step"] for log in log_history_new if "loss" in log]
+    train_loss_new = [log["loss"] for log in log_history_new if "loss" in log]
+
+    eval_steps_new = [log["step"] for log in log_history_new if "eval_loss" in log]
+    eval_loss_new = [log["eval_loss"] for log in log_history_new if "eval_loss" in log]
+    return eval_loss_new, eval_steps_new, train_loss_new, train_steps_new
+
+
+@app.cell
+def _(
+    eval_loss,
+    eval_loss_new,
+    eval_steps,
+    eval_steps_new,
+    plt,
+    train_loss,
+    train_loss_new,
+    train_steps,
+    train_steps_new,
+):
     sizef = 14
     plt.plot(
         train_steps,
         train_loss,
-        label="Training Loss",
+        label="Training Loss (LN)",
         color="blue",
         marker="o",
     )
     plt.plot(
-        eval_steps, eval_loss, label="Evaluation Loss", color="red", marker="x"
+        eval_steps, eval_loss, label="Evaluation Loss (LN)", color="red", marker="x"
     )
-    plt.xlabel("Training Steps", fontsize=sizef)
+
+    plt.plot(
+        train_steps_new,
+        train_loss_new,
+        '--.',
+        label="Training Loss",
+        color="lightblue"
+    )
+    plt.plot(
+        eval_steps_new, eval_loss_new, '--x', label="Evaluation Loss (Tanh)", color="lightcoral"
+    )
+
+    plt.xlabel("Training Steps (Tanh)", fontsize=sizef)
     plt.ylabel("Loss", fontsize=sizef)
     plt.legend(fontsize=sizef)
     plt.show()
