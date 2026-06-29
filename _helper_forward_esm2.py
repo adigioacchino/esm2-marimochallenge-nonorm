@@ -34,9 +34,6 @@ with app.setup:
     importlib.invalidate_caches()
     print("Success! It is now safe to run your training cell.")
 
-
-@app.cell
-def _():
     import os
     import copy
     import gzip
@@ -59,23 +56,6 @@ def _():
         TrainingArguments,
     )
     from Bio import SeqIO
-
-    return (
-        DataCollatorForLanguageModeling,
-        EsmConfig,
-        EsmForMaskedLM,
-        EsmTokenizer,
-        IterableDataset,
-        Trainer,
-        TrainingArguments,
-        copy,
-        json,
-        load_dataset,
-        nn,
-        plt,
-        random,
-        torch,
-    )
 
 
 @app.cell(hide_code=True)
@@ -101,7 +81,7 @@ def _():
 
 
 @app.cell
-def _(torch):
+def _():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return (device,)
 
@@ -121,7 +101,7 @@ def _():
 
 
 @app.cell
-def _(EsmConfig, EsmForMaskedLM, EsmTokenizer, device):
+def _(device):
     model_name = "facebook/esm2_t6_8M_UR50D" # this is a smaller model
     # model_name = "facebook/esm2_t12_35M_UR50D" # this is a larger model
 
@@ -146,7 +126,7 @@ def _():
 
 
 @app.cell
-def _(nn, torch):
+def _():
     class DyT(nn.Module):
         def __init__(self, num_features, alpha_init_value=10.0):
             super().__init__()
@@ -181,7 +161,7 @@ def _(nn, torch):
 
 
 @app.cell
-def _(copy, device, model, replace_layernorm_with_dyt):
+def _(device, model, replace_layernorm_with_dyt):
     model_new = copy.deepcopy(model)
     replace_layernorm_with_dyt(model_new)
     model_new.to(device)
@@ -197,41 +177,38 @@ def _():
     return
 
 
-@app.cell
-def _(IterableDataset, load_dataset, random):
-    class StreamingUniRefDataset(IterableDataset):
-        def __init__(self, tokenizer, split="train", max_length=1024, seed=1):
-            self.tokenizer = tokenizer
-            self.split: str = split
-            self.max_length: int = max_length
-            self.seed: int = seed
-            self.uniref_ds = load_dataset(
-                "agemagician/uniref30", split=split, streaming=True
-            ).shuffle(seed=seed)
+@app.class_definition
+class StreamingUniRefDataset(IterableDataset):
+    def __init__(self, tokenizer, split="train", max_length=1024, seed=1):
+        self.tokenizer = tokenizer
+        self.split: str = split
+        self.max_length: int = max_length
+        self.seed: int = seed
+        self.uniref_ds = load_dataset(
+            "agemagician/uniref30", split=split, streaming=True
+        ).shuffle(seed=seed)
 
-        def __iter__(self):
-            # Setting a seed helps keep the split consistent during a single training run
-            random.seed(self.seed)
+    def __iter__(self):
+        # Setting a seed helps keep the split consistent during a single training run
+        random.seed(self.seed)
 
-            for x in self.uniref_ds:
-                protein_sequence = x["text"]
+        for x in self.uniref_ds:
+            protein_sequence = x["text"]
 
-                # Process and yield the sequence
-                encoding = self.tokenizer(
-                    protein_sequence,
-                    truncation=True,
-                    max_length=self.max_length,
-                    padding="max_length",
-                    return_tensors="pt",
-                )
+            # Process and yield the sequence
+            encoding = self.tokenizer(
+                protein_sequence,
+                truncation=True,
+                max_length=self.max_length,
+                padding="max_length",
+                return_tensors="pt",
+            )
 
-                yield {key: val.squeeze(0) for key, val in encoding.items()}
-
-    return (StreamingUniRefDataset,)
+            yield {key: val.squeeze(0) for key, val in encoding.items()}
 
 
 @app.cell
-def _(StreamingUniRefDataset, tokenizer):
+def _(tokenizer):
     max_length = (
         8 * 64
     )  # Limit sequences to 100 amino acids for faster training
@@ -271,16 +248,7 @@ def _(train_og_button):
 
 
 @app.cell
-def _(
-    DataCollatorForLanguageModeling,
-    Trainer,
-    TrainingArguments,
-    eval_dataset,
-    model,
-    tokenizer,
-    train_dataset,
-    train_og_button,
-):
+def _(eval_dataset, model, tokenizer, train_dataset, train_og_button):
     mo.stop(not train_og_button.value)
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=True, mlm_probability=0.15
@@ -341,16 +309,7 @@ def _(train_new_button):
 
 
 @app.cell
-def _(
-    DataCollatorForLanguageModeling,
-    Trainer,
-    TrainingArguments,
-    eval_dataset,
-    model_new,
-    tokenizer,
-    train_dataset,
-    train_new_button,
-):
+def _(eval_dataset, model_new, tokenizer, train_dataset, train_new_button):
     mo.stop(not train_new_button.value)
     data_collator_new = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=True, mlm_probability=0.15
@@ -407,7 +366,7 @@ def _():
 
 
 @app.cell
-def _(json):
+def _():
     state_file = "./esm2_comparison_run/checkpoint-100/trainer_state.json"
 
     with open(state_file, "r") as f:
@@ -426,7 +385,7 @@ def _(json):
 
 
 @app.cell
-def _(json):
+def _():
     state_file_new = "./esm2_comparison_run_new/checkpoint-100/trainer_state.json"
 
     with open(state_file_new, "r") as f_new:
@@ -450,7 +409,6 @@ def _(
     eval_loss_new,
     eval_steps,
     eval_steps_new,
-    plt,
     train_loss,
     train_loss_new,
     train_steps,
