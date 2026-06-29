@@ -401,7 +401,7 @@ def _(
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    Now we can visualise the Evaluation and Training loss along the optimization, and we see that both models reach the same precition. The precision reached is comparable to the precision of the original model, used in out analysis.
+    Now we can visualise the Evaluation and Training loss along the optimization, and we see that both models reach the same precition. The precision reached is comparable to the precision of the original model, trained by meta.
     """)
     return
 
@@ -456,6 +456,7 @@ def _(
     train_steps,
     train_steps_new,
 ):
+    og_prec = 2.44
     sizef = 14
     plt.plot(
         train_steps,
@@ -478,6 +479,9 @@ def _(
     plt.plot(
         eval_steps_new, eval_loss_new, '--x', label="Evaluation Loss (Tanh)", color="lightcoral"
     )
+
+    plt.plot([0, 100], [og_prec] * 2, '--', linewidth=1, color='black')
+    plt.text(1, og_prec + 0.04, 'OG precision', fontsize=sizef)
 
     plt.xlabel("Training Steps (Tanh)", fontsize=sizef)
     plt.ylabel("Loss", fontsize=sizef)
