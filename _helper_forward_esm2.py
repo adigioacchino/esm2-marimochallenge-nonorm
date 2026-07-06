@@ -9,22 +9,9 @@ with app.setup:
     import importlib
     import marimo as mo
 
-    # is_local_venv = sys.prefix != sys.base_prefix
-    # mo.stop(
-    #     is_local_venv,
-    #     mo.md(
-    #         "🛑 **Local environment detected.** Skipping cloud dependency installation."
-    #     ),
-    # )
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "accelerate>=1.1.0"])
 
-    # 1. Install accelerate directly to the active server environment
-    print("Installing accelerate...")
-    # subprocess.check_call(
-    #    [sys.executable, "-m", "pip", "install", "accelerate>=1.1.0"]
-    # )
-
-    # 2. The Nuclear Option: Erase transformers from Python's active memory
-    print("Wiping cached imports...")
+    # Erase transformers from Python's active memory
     for module_name in list(sys.modules.keys()):
         if module_name.startswith("transformers") or module_name.startswith(
             "accelerate"
@@ -32,7 +19,6 @@ with app.setup:
             del sys.modules[module_name]
 
     importlib.invalidate_caches()
-    print("Success! It is now safe to run your training cell.")
 
     import os
     import copy
@@ -176,7 +162,7 @@ class DyT(nn.Module):
 
 
 @app.function
-def replace_layernorm_with_dyt(module: nn.Module) -> None:
+def replace_layernorm_with_dyt(module: nn.Module, alpha: float = 10.0) -> None:
     """
     Recursively searches a PyTorch model for nn.LayerNorm modules
     and replaces them with the custom DyT layer.
@@ -189,7 +175,7 @@ def replace_layernorm_with_dyt(module: nn.Module) -> None:
             num_features = child.normalized_shape[0]
 
             # Create your custom layer and swap it in
-            custom_layer = DyT(num_features=num_features)
+            custom_layer = DyT(num_features=num_features, alpha_init_value=alpha)
             setattr(module, name, custom_layer)
         else:
             # If it's not a LayerNorm, dig deeper into this child
@@ -197,9 +183,9 @@ def replace_layernorm_with_dyt(module: nn.Module) -> None:
 
 
 @app.cell
-def _(device, model):
+def _(device, model, parameter_alpha):
     model_new = copy.deepcopy(model)
-    replace_layernorm_with_dyt(model_new)
+    replace_layernorm_with_dyt(model_new, alpha=parameter_alpha.value)
     model_new.to(device)
     model_new.eval()
     return (model_new,)
@@ -245,9 +231,7 @@ class StreamingUniRefDataset(IterableDataset):
 
 @app.cell
 def _(tokenizer):
-    max_length = (
-        8 * 64
-    )  # Limit sequences to 100 amino acids for faster training
+    max_length = 8 * 64  # Limit sequences to 100 amino acids for faster training
     train_dataset = StreamingUniRefDataset(
         tokenizer=tokenizer,
         split="train",
@@ -333,9 +317,7 @@ def _():
 
 @app.cell
 def _(parameter_alpha, train_new_button, train_og_button):
-    mo.vstack(
-        [train_og_button, train_new_button, parameter_alpha], justify="start"
-    )
+    mo.vstack([train_og_button, train_new_button, parameter_alpha], justify="start")
     return
 
 
@@ -413,9 +395,7 @@ def _():
             log["step"] for log in log_history_og_precomp if "eval_loss" in log
         ]
         eval_loss_og_precomp = [
-            log["eval_loss"]
-            for log in log_history_og_precomp
-            if "eval_loss" in log
+            log["eval_loss"] for log in log_history_og_precomp if "eval_loss" in log
         ]
     return train_loss_og_precomp, train_steps_og_precomp
 
@@ -424,9 +404,7 @@ def _():
 def _():
     state_file = (
         "./esm2_comparison_run/checkpoint-100/trainer_state.json"
-        if os.path.exists(
-            "./esm2_comparison_run/checkpoint-100/trainer_state.json"
-        )
+        if os.path.exists("./esm2_comparison_run/checkpoint-100/trainer_state.json")
         else None
     )
     if state_file is not None:
@@ -441,9 +419,7 @@ def _():
         train_loss = [log["loss"] for log in log_history if "loss" in log]
 
         eval_steps = [log["step"] for log in log_history if "eval_loss" in log]
-        eval_loss = [
-            log["eval_loss"] for log in log_history if "eval_loss" in log
-        ]
+        eval_loss = [log["eval_loss"] for log in log_history if "eval_loss" in log]
     return eval_loss, eval_steps, state_file, train_loss, train_steps
 
 
@@ -451,9 +427,7 @@ def _():
 def _():
     state_file_new = (
         ("./esm2_comparison_run_new/checkpoint-100/trainer_state.json")
-        if os.path.exists(
-            "./esm2_comparison_run_new/checkpoint-100/trainer_state.json"
-        )
+        if os.path.exists("./esm2_comparison_run_new/checkpoint-100/trainer_state.json")
         else None
     )
     if state_file_new is not None:
@@ -464,16 +438,10 @@ def _():
         log_history_new = state_data_new["log_history"]
 
         # Separate training loss and evaluation loss
-        train_steps_new = [
-            log["step"] for log in log_history_new if "loss" in log
-        ]
-        train_loss_new = [
-            log["loss"] for log in log_history_new if "loss" in log
-        ]
+        train_steps_new = [log["step"] for log in log_history_new if "loss" in log]
+        train_loss_new = [log["loss"] for log in log_history_new if "loss" in log]
 
-        eval_steps_new = [
-            log["step"] for log in log_history_new if "eval_loss" in log
-        ]
+        eval_steps_new = [log["step"] for log in log_history_new if "eval_loss" in log]
         eval_loss_new = [
             log["eval_loss"] for log in log_history_new if "eval_loss" in log
         ]
