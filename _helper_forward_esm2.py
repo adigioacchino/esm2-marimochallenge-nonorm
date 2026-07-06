@@ -9,7 +9,9 @@ with app.setup:
     import importlib
     import marimo as mo
 
-    # subprocess.check_call([sys.executable, "-m", "pip", "install", "accelerate>=1.1.0"])
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "accelerate>=1.1.0"]
+    )
 
     # Erase transformers from Python's active memory
     for module_name in list(sys.modules.keys()):
@@ -184,7 +186,15 @@ def replace_layernorm_with_dyt(
             setattr(module, name, custom_layer)
         else:
             # If it's not a LayerNorm, dig deeper into this child
-            replace_layernorm_with_dyt(child)
+            replace_layernorm_with_dyt(child, alpha=alpha)
+
+
+@app.cell
+def _():
+    parameter_alpha = mo.ui.number(
+        start=0, stop=100, step=0.01, value=10.0, label="Set alpha"
+    )
+    return (parameter_alpha,)
 
 
 @app.cell
@@ -265,10 +275,7 @@ def _():
 @app.cell
 def _():
     train_og_button = mo.ui.run_button(label="Train original model")
-    parameter_alpha = mo.ui.number(
-        start=0, stop=100, step=0.01, value=10.0, label="Set alpha"
-    )
-    return parameter_alpha, train_og_button
+    return (train_og_button,)
 
 
 @app.cell
@@ -455,6 +462,7 @@ def _(
     eval_loss_new,
     eval_steps,
     eval_steps_new,
+    parameter_alpha,
     state_file,
     state_file_new,
     train_loss,
@@ -521,6 +529,10 @@ def _(
 
     plt.xlabel("Training Steps (Tanh)", fontsize=sizef)
     plt.ylabel("Loss", fontsize=sizef)
+    plt.title(
+        f"Training and Evaluation Loss Comparison, alpha = {parameter_alpha.value}",
+        fontsize=sizef,
+    )
     plt.legend(fontsize=sizef, frameon=False)
     plt.show()
     return
