@@ -9,9 +9,7 @@ with app.setup:
     import importlib
     import marimo as mo
 
-    subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "accelerate>=1.1.0"]
-    )
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "accelerate>=1.1.0"])
 
     # Erase transformers from Python's active memory
     for module_name in list(sys.modules.keys()):
@@ -165,9 +163,7 @@ class DyT(nn.Module):
 
 
 @app.function
-def replace_layernorm_with_dyt(
-    module: nn.Module, alpha: float = 10.0
-) -> None:
+def replace_layernorm_with_dyt(module: nn.Module, alpha: float = 10.0) -> None:
     """
     Recursively searches a PyTorch model for nn.LayerNorm modules
     and replaces them with the custom DyT layer.
@@ -180,9 +176,7 @@ def replace_layernorm_with_dyt(
             num_features = child.normalized_shape[0]
 
             # Create your custom layer and swap it in
-            custom_layer = DyT(
-                num_features=num_features, alpha_init_value=alpha
-            )
+            custom_layer = DyT(num_features=num_features, alpha_init_value=alpha)
             setattr(module, name, custom_layer)
         else:
             # If it's not a LayerNorm, dig deeper into this child
@@ -192,7 +186,11 @@ def replace_layernorm_with_dyt(
 @app.cell
 def _():
     parameter_alpha = mo.ui.number(
-        start=0, stop=100, step=0.01, value=10.0, label="Set alpha"
+        start=0,
+        stop=100,
+        step=0.01,
+        value=10.0,
+        label="Set parameter $\\alpha$ for DyT layer",
     )
     return (parameter_alpha,)
 
@@ -246,9 +244,7 @@ class StreamingUniRefDataset(IterableDataset):
 
 @app.cell
 def _(tokenizer):
-    max_length = (
-        8 * 64
-    )  # Limit sequences to 100 amino acids for faster training
+    max_length = 8 * 64  # Limit sequences to 100 amino acids for faster training
     train_dataset = StreamingUniRefDataset(
         tokenizer=tokenizer,
         split="train",
@@ -274,7 +270,7 @@ def _():
 
 @app.cell
 def _():
-    train_og_button = mo.ui.run_button(label="Train original model")
+    train_og_button = mo.ui.run_button(label="▶️ Train original model")
     return (train_og_button,)
 
 
@@ -325,15 +321,13 @@ def _(eval_dataset, model, tokenizer, train_dataset, train_og_button):
 
 @app.cell
 def _():
-    train_new_button = mo.ui.run_button(label="Train the new model")
+    train_new_button = mo.ui.run_button(label="▶️ Train the new model")
     return (train_new_button,)
 
 
 @app.cell
 def _(parameter_alpha, train_new_button, train_og_button):
-    mo.vstack(
-        [train_og_button, train_new_button, parameter_alpha], justify="start"
-    )
+    mo.vstack([train_og_button, train_new_button, parameter_alpha], justify="start")
     return
 
 
@@ -391,12 +385,11 @@ def _():
 
 
 @app.cell
-def _():
+def _(train_og_button):
+    train_og_button
     state_file = (
         "./esm2_comparison_run/checkpoint-100/trainer_state.json"
-        if os.path.exists(
-            "./esm2_comparison_run/checkpoint-100/trainer_state.json"
-        )
+        if os.path.exists("./esm2_comparison_run/checkpoint-100/trainer_state.json")
         else None
     )
     if state_file is not None:
@@ -411,19 +404,16 @@ def _():
         train_loss = [log["loss"] for log in log_history if "loss" in log]
 
         eval_steps = [log["step"] for log in log_history if "eval_loss" in log]
-        eval_loss = [
-            log["eval_loss"] for log in log_history if "eval_loss" in log
-        ]
+        eval_loss = [log["eval_loss"] for log in log_history if "eval_loss" in log]
     return eval_loss, eval_steps, state_file, train_loss, train_steps
 
 
 @app.cell
-def _():
+def _(train_new_button):
+    train_new_button
     state_file_new = (
         ("./esm2_comparison_run_new/checkpoint-100/trainer_state.json")
-        if os.path.exists(
-            "./esm2_comparison_run_new/checkpoint-100/trainer_state.json"
-        )
+        if os.path.exists("./esm2_comparison_run_new/checkpoint-100/trainer_state.json")
         else None
     )
     if state_file_new is not None:
@@ -434,16 +424,10 @@ def _():
         log_history_new = state_data_new["log_history"]
 
         # Separate training loss and evaluation loss
-        train_steps_new = [
-            log["step"] for log in log_history_new if "loss" in log
-        ]
-        train_loss_new = [
-            log["loss"] for log in log_history_new if "loss" in log
-        ]
+        train_steps_new = [log["step"] for log in log_history_new if "loss" in log]
+        train_loss_new = [log["loss"] for log in log_history_new if "loss" in log]
 
-        eval_steps_new = [
-            log["step"] for log in log_history_new if "eval_loss" in log
-        ]
+        eval_steps_new = [log["step"] for log in log_history_new if "eval_loss" in log]
         eval_loss_new = [
             log["eval_loss"] for log in log_history_new if "eval_loss" in log
         ]
@@ -530,11 +514,10 @@ def _(
     plt.xlabel("Training Steps (Tanh)", fontsize=sizef)
     plt.ylabel("Loss", fontsize=sizef)
     plt.title(
-        f"Training and Evaluation Loss Comparison, alpha = {parameter_alpha.value}",
+        f"Training and Evaluation Loss Comparison, $\\alpha =$ {parameter_alpha.value}",
         fontsize=sizef,
     )
     plt.legend(fontsize=sizef, frameon=False)
-    plt.show()
     return
 
 
