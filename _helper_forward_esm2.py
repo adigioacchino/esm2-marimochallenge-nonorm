@@ -9,7 +9,7 @@ with app.setup:
     import importlib
     import marimo as mo
 
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "accelerate>=1.1.0"])
+    # subprocess.check_call([sys.executable, "-m", "pip", "install", "accelerate>=1.1.0"])
 
     # Erase transformers from Python's active memory
     for module_name in list(sys.modules.keys()):
@@ -29,6 +29,7 @@ with app.setup:
     from datasets import load_dataset
     import json
     import matplotlib.pyplot as plt
+    import numpy as np
 
     import torch
     import torch.nn as nn
@@ -162,7 +163,9 @@ class DyT(nn.Module):
 
 
 @app.function
-def replace_layernorm_with_dyt(module: nn.Module, alpha: float = 10.0) -> None:
+def replace_layernorm_with_dyt(
+    module: nn.Module, alpha: float = 10.0
+) -> None:
     """
     Recursively searches a PyTorch model for nn.LayerNorm modules
     and replaces them with the custom DyT layer.
@@ -175,7 +178,9 @@ def replace_layernorm_with_dyt(module: nn.Module, alpha: float = 10.0) -> None:
             num_features = child.normalized_shape[0]
 
             # Create your custom layer and swap it in
-            custom_layer = DyT(num_features=num_features, alpha_init_value=alpha)
+            custom_layer = DyT(
+                num_features=num_features, alpha_init_value=alpha
+            )
             setattr(module, name, custom_layer)
         else:
             # If it's not a LayerNorm, dig deeper into this child
@@ -231,7 +236,9 @@ class StreamingUniRefDataset(IterableDataset):
 
 @app.cell
 def _(tokenizer):
-    max_length = 8 * 64  # Limit sequences to 100 amino acids for faster training
+    max_length = (
+        8 * 64
+    )  # Limit sequences to 100 amino acids for faster training
     train_dataset = StreamingUniRefDataset(
         tokenizer=tokenizer,
         split="train",
@@ -317,7 +324,9 @@ def _():
 
 @app.cell
 def _(parameter_alpha, train_new_button, train_og_button):
-    mo.vstack([train_og_button, train_new_button, parameter_alpha], justify="start")
+    mo.vstack(
+        [train_og_button, train_new_button, parameter_alpha], justify="start"
+    )
     return
 
 
@@ -376,35 +385,11 @@ def _():
 
 @app.cell
 def _():
-    path_to_precomputed_original = "./trainer_state_original.json"
-    with open(path_to_precomputed_original, "r") as _f:
-        _state_data = json.load(_f)
-
-        # Extract steps and loss values from the log history
-        log_history_og_precomp = _state_data["log_history"]
-
-        # Separate training loss and evaluation loss
-        train_steps_og_precomp = [
-            log["step"] for log in log_history_og_precomp if "loss" in log
-        ]
-        train_loss_og_precomp = [
-            log["loss"] for log in log_history_og_precomp if "loss" in log
-        ]
-
-        eval_steps_og_precomp = [
-            log["step"] for log in log_history_og_precomp if "eval_loss" in log
-        ]
-        eval_loss_og_precomp = [
-            log["eval_loss"] for log in log_history_og_precomp if "eval_loss" in log
-        ]
-    return train_loss_og_precomp, train_steps_og_precomp
-
-
-@app.cell
-def _():
     state_file = (
         "./esm2_comparison_run/checkpoint-100/trainer_state.json"
-        if os.path.exists("./esm2_comparison_run/checkpoint-100/trainer_state.json")
+        if os.path.exists(
+            "./esm2_comparison_run/checkpoint-100/trainer_state.json"
+        )
         else None
     )
     if state_file is not None:
@@ -419,7 +404,9 @@ def _():
         train_loss = [log["loss"] for log in log_history if "loss" in log]
 
         eval_steps = [log["step"] for log in log_history if "eval_loss" in log]
-        eval_loss = [log["eval_loss"] for log in log_history if "eval_loss" in log]
+        eval_loss = [
+            log["eval_loss"] for log in log_history if "eval_loss" in log
+        ]
     return eval_loss, eval_steps, state_file, train_loss, train_steps
 
 
@@ -427,7 +414,9 @@ def _():
 def _():
     state_file_new = (
         ("./esm2_comparison_run_new/checkpoint-100/trainer_state.json")
-        if os.path.exists("./esm2_comparison_run_new/checkpoint-100/trainer_state.json")
+        if os.path.exists(
+            "./esm2_comparison_run_new/checkpoint-100/trainer_state.json"
+        )
         else None
     )
     if state_file_new is not None:
@@ -438,10 +427,16 @@ def _():
         log_history_new = state_data_new["log_history"]
 
         # Separate training loss and evaluation loss
-        train_steps_new = [log["step"] for log in log_history_new if "loss" in log]
-        train_loss_new = [log["loss"] for log in log_history_new if "loss" in log]
+        train_steps_new = [
+            log["step"] for log in log_history_new if "loss" in log
+        ]
+        train_loss_new = [
+            log["loss"] for log in log_history_new if "loss" in log
+        ]
 
-        eval_steps_new = [log["step"] for log in log_history_new if "eval_loss" in log]
+        eval_steps_new = [
+            log["step"] for log in log_history_new if "eval_loss" in log
+        ]
         eval_loss_new = [
             log["eval_loss"] for log in log_history_new if "eval_loss" in log
         ]
@@ -531,9 +526,117 @@ def _(
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
-    return
+    train_loss_og_precomp = [
+        3.4790120124816895,
+        3.4713423252105713,
+        3.3997716903686523,
+        3.281043767929077,
+        3.191840171813965,
+        3.149264097213745,
+        3.0645675659179688,
+        3.0586206912994385,
+        3.0050652027130127,
+        2.996073007583618,
+        2.999319076538086,
+        2.9976134300231934,
+        3.0016891956329346,
+        2.9463517665863037,
+        2.954683303833008,
+        2.941167116165161,
+        2.9394967555999756,
+        2.943321704864502,
+        2.916232109069824,
+        2.9267561435699463,
+        2.898732900619507,
+        2.893810987472534,
+        2.861203193664551,
+        2.884669780731201,
+        2.8641276359558105,
+        2.8433263301849365,
+        2.8692564964294434,
+        2.876488447189331,
+        2.8567521572113037,
+        2.8488802909851074,
+        2.8181281089782715,
+        2.785329818725586,
+        2.816866636276245,
+        2.804933547973633,
+        2.8360254764556885,
+        2.792471170425415,
+        2.8073348999023438,
+        2.7680583000183105,
+        2.768831729888916,
+        2.7843246459960938,
+        2.7445991039276123,
+        2.7720043659210205,
+        2.708559989929199,
+        2.8043060302734375,
+        2.7385740280151367,
+        2.725388526916504,
+        2.7335050106048584,
+        2.7093684673309326,
+        2.7321765422821045,
+        2.75209379196167,
+        2.717442750930786,
+        2.7273409366607666,
+        2.7476418018341064,
+        2.6811773777008057,
+        2.745795249938965,
+        2.7245304584503174,
+        2.7490625381469727,
+        2.7078254222869873,
+        2.7115366458892822,
+        2.70440411567688,
+        2.709927558898926,
+        2.7460572719573975,
+        2.6954030990600586,
+        2.7279374599456787,
+        2.6930084228515625,
+        2.698761224746704,
+        2.739962339401245,
+        2.7155139446258545,
+        2.728412628173828,
+        2.7035579681396484,
+        2.7126238346099854,
+        2.670447587966919,
+        2.726806163787842,
+        2.6547999382019043,
+        2.674043655395508,
+        2.696397304534912,
+        2.6888720989227295,
+        2.6871654987335205,
+        2.6838223934173584,
+        2.7047741413116455,
+        2.6851141452789307,
+        2.7064545154571533,
+        2.6724605560302734,
+        2.669290781021118,
+        2.717341184616089,
+        2.6621532440185547,
+        2.696638822555542,
+        2.6997692584991455,
+        2.6998331546783447,
+        2.6618871688842773,
+        2.7069151401519775,
+        2.6942381858825684,
+        2.715121269226074,
+        2.6699461936950684,
+        2.7371037006378174,
+        2.6793854236602783,
+        2.6477065086364746,
+        2.711721181869507,
+        2.6924729347229004,
+        2.670194149017334,
+    ]
+
+    train_steps_og_precomp = np.arange(1, len(train_loss_og_precomp) + 1)
+
+    eval_loss_og_precomp = [2.6847891807556152]
+
+    eval_steps_og_precomp = [1]
+    return train_loss_og_precomp, train_steps_og_precomp
 
 
 if __name__ == "__main__":
