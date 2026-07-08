@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.11"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -56,9 +56,13 @@ def _():
 
     > <center> _"**Attention**, <ins>with proper normalization</ins>, is all you need!"_ </center>
 
-    But what is Normalization? if you've ever bumped on a youtube video about LLM, You would already know that these powerful tool are composed as chains of arcane objects called _transformers_ which are able to recognize statistical interaction between distant token (aka letters/words etc.) in the input phrase.
+    But what is Normalization? if you've ever bumped on a youtube video about LLM, you would already know that this powerful tool is composed as chains of arcane objects called _transformers_ which are able to recognize statistical interactions between distant tokens (aka letters/words etc.) in the input phrase.
 
-    Transformers are truly amazing object, but they have one small Achilles' heel: they tend to
+    Transformers are truly amazing objects, but they have one small Achilles' heel: they often rescale the features. As a consequence, the data can collapse to only zeros, to a small subspace, or even explode in value. A solution to this is the Normalization layer, which rescales the output by centering it around the average, and normalizing it to the unit width. However, average and width change for every input/output pair, and therefore the parameters in this layer cannot be fixed - they are computed on the fly. This introduces a lot of complexity to the design of models, as choice has to be made about what procedure is used during the training, and deployment.
+
+    In the work by [Jiachen Zhu, Xinlei Chen, Kaiming He, Yann LeCun and Zhuang Liu](https://arxiv.org/abs/2503.10622v2) they observe that actually in a large set of models, the Normalization layers learn to perform a very simple transformation. Even though each input is transformed linarly, when evaluated over many inputs (many training samples), a more complicated shape consistenly appears - a logistic like curve.
+
+    In this notebook we made an arbitrary choice, and looked at a family of ESM protein models. Bellow you can for yourself check how Normalization layers in the model transform the features.
     """)
     return
 
@@ -215,13 +219,15 @@ def _(activations, selected_layer):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    So let us now quickly demonstrate, that the LN normalization layer can indeed be simply repplaced by a DyT layer, comprising only of the nonlinear logistic function
+    We indeed see, that the shapes produced often end up forming a logistic function. The same observation in other models lead the authors of the publication to propose a simpler alternative to the Normalization layer. Since the function seems to just reduce to simple $\tanh$, they propose to use
 
     $$
     DyT(\boldsymbol{x}) = \boldsymbol{\gamma} * \tanh(\alpha\boldsymbol{x})+\boldsymbol{\beta},
     $$
 
-    where $\boldsymbol{\gamma}$ and $\boldsymbol{\beta}$ are vectors of weigths with the dimension $|\boldsymbol{x}|$, and $\alpha$ a simple scalar. Now we will take the original model, and replace all the normalization layers with this $DyT$ layer, and train it from scratch. In order to make sure that our training is well done, we will also retrain the orignal model with standard LN normalizaiton layer.
+    where $\boldsymbol{\gamma}$ and $\boldsymbol{\beta}$ are vectors of weigths with the dimension $|\boldsymbol{x}|$, and $\alpha$ a simple scalar. They refer to the layer as the DyT layer. Very surprisingly this layer seems to perform as good as a full normalization layer in many examples that they checked.
+
+    In orter to see this for ourselves, the notebook allows us to test this idea in the ESM protein model. Due to computational constraints we limit ourselvs to a model with 8M parameters. Then we replace all the Normalizaiton layers with the new $DyT$ layer, and retrain it from scratch. In order to make sure that our training is well done, we will also retrain the orignal model with standard LN normalizaiton layer.
     """)
     return
 
@@ -229,7 +235,7 @@ def _():
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    This is a considerably more chalenging computation, so we encurage the user to switch to the cuda kernel, offered by the **molab**. If the krnel was chosen succesfully, the next line should print out: " *Device used: 'cuda'* "
+    This computation is quite heavy, so we encurage the user to switch to the cuda kernel, offered by the **molab**. If the krnel was chosen succesfully, the next line should print out: " *Device used: 'cuda'* "
     """)
     return
 
@@ -269,7 +275,7 @@ def _(device):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    In `pytorch` the layers can be easily replaced. First we define a new `DyT` layer class, and initialise the value of $\alpha_0=10.0$. The training is very sensitive to $\alpha_0$. Values like $\alpha_0=\{0.1, 0.5, 1.0\}$ significantly underperform the original model. The notebook allows you to play with different values by using the input window below. Once the `DyT` class is constructed, we define a function that runs through all the layers, and replaces all instances of `nn.LayerNorm` by `DyT`. Here we have to make sure that the dimension of features stays the same.
+    In `pytorch` the layers can be easily replaced. First we define a new `DyT` layer class, and initialise the value of $\alpha_0=10.0$. The training is very sensitive to $\alpha_0$. Values like $\alpha_0=\{0.1, 0.5, 1.0\}$ significantly underperform the original model. The notebook allows you to play with different values by using the input window below. Once the `DyT` class is constructed, we define a function that runs through all the layers, and replaces all instances of `nn.LayerNorm` by `DyT`. The function makes sure that the dimension of features stays the same as in the original model.
     """)
     return
 
