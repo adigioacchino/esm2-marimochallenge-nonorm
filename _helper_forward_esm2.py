@@ -346,7 +346,7 @@ def _(device, model, parameter_alpha):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    Just as before, we load the data, in a format useful for the training.
+    We load the data, in a format useful for the training. The training and tests sets are fully seperated, and imported in the "read-on-the-fly" mode. We also have to choose the embeding dimension, which we choose to be $512$.
     """)
     return
 
@@ -372,7 +372,7 @@ def _(tokenizer):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    Now we can start the training. First of the original model, and then with the new model. In order to start the training press the button. Using the 'cuda' kernel offered by **molab** the training of each model should take about a minute. All the parameters, except for the learning rate were kept the same, while the learnign rate equals to 1e-4 in the model with LN and 4e-4 in the model with DyT.
+    Now we can start the training. First of the original model, and then with the new model. The training loss along the training of the original model is already precomputed, and displayed bellow, for your convinience. **In order to start the training press the button.** Using the 'cuda' kernel offered by **molab** the training of each model should take about a minute. All the parameters, except for the learning rate were kept the same, while the learnign rate equals to 1e-4 in the model with LN and 4e-4 in the model with DyT.
     """)
     return
 
@@ -488,7 +488,7 @@ def _(eval_dataset, model_new, tokenizer, train_dataset, train_new_button):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    Now we can visualise the Evaluation and Training loss along the optimization, and we see that both models reach the same precition. The precision reached is comparable to the precision of the original model, trained by meta.
+    Visualisation of the Evaluation and Training loss along the optimization. The precision reached is comparable to the precision of the original model, trained by meta.
     """)
     return
 
