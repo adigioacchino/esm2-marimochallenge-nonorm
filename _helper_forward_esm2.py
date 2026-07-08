@@ -62,7 +62,7 @@ def _():
 
     In the work by [Jiachen Zhu, Xinlei Chen, Kaiming He, Yann LeCun and Zhuang Liu](https://arxiv.org/abs/2503.10622v2) they observe that actually in a large set of models, the Normalization layers learn to perform a very simple transformation. Even though each input is transformed linarly, when evaluated over many inputs (many training samples), a more complicated shape consistenly appears - a logistic like curve.
 
-    In this notebook we made an arbitrary choice, and looked at a family of ESM protein models. Bellow you can for yourself check how Normalization layers in the model transform the features.
+    In this notebook we made an arbitrary choice, and looked at a family of ESM protein models. Bellow you can for yourself check how Normalization layers in the model transform the features. You can choose between three models, and choose the number of tokens to average over. We observed that the complexity of the observed shape strongly depends on the lenght of the input genome sequence. You can explore this behavior by chaning the `Min Length` and `Max Length` parameters. You might also observe that the complexity of shapes increases with the complexity of the model (**n** and **m** in '*esm2_t**n**_**m**M_UR50D*' count the number of transformer layers and the number of parameters).
     """)
     return
 
@@ -227,6 +227,9 @@ def _():
 
     where $\boldsymbol{\gamma}$ and $\boldsymbol{\beta}$ are vectors of weigths with the dimension $|\boldsymbol{x}|$, and $\alpha$ a simple scalar. They refer to the layer as the DyT layer. Very surprisingly this layer seems to perform as good as a full normalization layer in many examples that they checked.
 
+    ## <center> Training of ESM with DyT layer </center>
+    ---
+
     In orter to see this for ourselves, the notebook allows us to test this idea in the ESM protein model. Due to computational constraints we limit ourselvs to a model with 8M parameters. Then we replace all the Normalizaiton layers with the new $DyT$ layer, and retrain it from scratch. In order to make sure that our training is well done, we will also retrain the orignal model with standard LN normalizaiton layer.
     """)
     return
@@ -250,7 +253,7 @@ def _():
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    Now that we checked what kernel we are using (we reccomend cuda), we reload the orignal model, and initialise all the weights to random values.
+    Now that we checked what kernel we are using (we reccomend cuda), we reload the orignal model, and initialise all the weights to random values. In the window bellow, you can inspect the structure of the model in detail.
     """)
     return
 
@@ -334,6 +337,14 @@ def _():
     return (parameter_alpha,)
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Now we apply the function, and you can see that below all the Normalization layers are now replaced by DyT.
+    """)
+    return
+
+
 @app.cell
 def _(device, model, parameter_alpha):
     model_new = copy.deepcopy(model)
@@ -341,14 +352,6 @@ def _(device, model, parameter_alpha):
     model_new.to(device)
     model_new.eval()
     return (model_new,)
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    We load the data, in a format useful for the training. The training and tests sets are fully seperated, and imported in the "read-on-the-fly" mode. We also have to choose the embeding dimension, which we choose to be $512$.
-    """)
-    return
 
 
 @app.cell
@@ -606,27 +609,27 @@ def _(
             train_steps_new,
             train_loss_new,
             "--.",
-            label="Training (Tanh)",
+            label="Training (DyT)",
             color="darkred",
         )
         plt.plot(
             eval_steps_new,
             eval_loss_new,
             "--x",
-            label="Evaluation (Tanh)",
+            label="Evaluation (DyT)",
             color="grey",
         )
 
     plt.plot([0, 100], [og_prec] * 2, "--", linewidth=1, color="black")
     plt.text(1, og_prec + 0.04, "OG precision", fontsize=sizef)
 
-    plt.xlabel("Training Steps (Tanh)", fontsize=sizef)
+    plt.xlabel("Training Steps (DyT)", fontsize=sizef)
     plt.ylabel("Loss", fontsize=sizef)
     plt.title(
         f"Training and Evaluation Loss Comparison, $\\alpha =$ {parameter_alpha.value}",
         fontsize=sizef,
     )
-    plt.legend(fontsize=sizef, frameon=False)
+    plt.legend(fontsize=sizef, frameon=False, loc='upper right')
     return
 
 
