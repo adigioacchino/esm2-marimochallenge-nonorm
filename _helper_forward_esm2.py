@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.11"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -43,18 +43,194 @@ with app.setup:
         TrainingArguments,
     )
     from Bio import SeqIO
+    from matplotlib.colors import LogNorm
 
 
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    So let us now quickly demonstrate, that the LN normalization layer can indeed be simply repplaced by a DyT layer, comprising only of the nonlinear logistic function
+    # <center>  **Transformers without Normalization** </center>
+    ## <center> Application to the ESM protein model </center>
+    ---
+    A wise man once said _"**Attention** is all you need!"_, but he probably forgot to add an important piece of information:
+
+    > <center> _"**Attention**, <ins>with proper normalization</ins>, is all you need!"_ </center>
+
+    But what is Normalization? if you've ever come across a youtube video about LLM, you would already know that this powerful tool is composed of chains of arcane objects called _transformers_ which are able to recognize statistical interactions between distant tokens (aka letters/words etc.) in the input phrase.
+
+    Transformers are truly amazing objects, but they have one small Achilles' heel: they often rescale the features. As a consequence, the data can collapse to only zeros, to a small subspace, or even explode in value. A solution to this is the Normalization layer, which rescales the output by centering it around the average, and normalizing it to the unit width. However, average and width change for every input/output pair, and therefore the parameters in this layer cannot be fixed - they are computed on the fly. This introduces a lot of complexity to the design of models, as choices have to be made about what procedure is used during the training, and deployment.
+
+    In the work by [Jiachen Zhu, Xinlei Chen, Kaiming He, Yann LeCun and Zhuang Liu](https://arxiv.org/abs/2503.10622v2) they observe that actually in a large set of models, the Normalization layers learn to perform a very simple transformation. Even though each input is transformed linearly, when evaluated over many inputs (many training samples), a more complicated shape consistently appears - a logistic-like curve.
+
+    In this notebook we made an arbitrary choice, and looked at a family of ESM protein models. Below you can check for yourself how Normalization layers in the model transform the features. You can choose between three models, and choose the number of tokens to average over. We observed that the complexity of the observed shape strongly depends on the length of the input protein sequence. You can explore this behavior by changing the `Min Length` and `Max Length` parameters. You might also observe that the complexity of shapes increases with the complexity of the model (**n** and **m** in '*esm2_t**n**_**m**M_UR50D*' count the number of transformer layers and the number of parameters).
+    """)
+    return
+
+
+@app.cell
+def _():
+    choose_model = mo.ui.dropdown(
+        options=[
+            "facebook/esm2_t30_150M_UR50D",
+            "facebook/esm2_t12_35M_UR50D",
+            "facebook/esm2_t6_8M_UR50D",
+        ],
+        value="facebook/esm2_t6_8M_UR50D",
+    )
+
+    choose_num_seqs = mo.ui.number(start=1, step=1, value=10)
+    choose_len_down = mo.ui.number(start=1, step=1, value=100)
+    choose_len_up = mo.ui.number(start=1, step=1, value=300)
+
+    run_button = mo.ui.run_button(label="Run Transformer")
+    return (
+        choose_len_down,
+        choose_len_up,
+        choose_model,
+        choose_num_seqs,
+        run_button,
+    )
+
+
+@app.cell
+def _(
+    choose_len_down,
+    choose_len_up,
+    choose_model,
+    choose_num_seqs,
+    run_button,
+):
+    mo.hstack(
+        [
+            mo.vstack([mo.md("Model selection"), choose_model]),
+            mo.vstack([mo.md("Number of Sequences"), choose_num_seqs]),
+            mo.vstack([mo.md("Min Length"), choose_len_down]),
+            mo.vstack([mo.md("Max Length"), choose_len_up]),
+            run_button,
+        ]
+    )
+    return
+
+
+@app.cell
+def _():
+    uniref_ds = load_dataset(
+        "agemagician/uniref30", split="train", streaming=True
+    ).shuffle(seed=1)
+    return (uniref_ds,)
+
+
+@app.cell
+def _(
+    choose_len_down,
+    choose_len_up,
+    choose_model,
+    choose_num_seqs,
+    device,
+    run_button,
+    uniref_ds,
+):
+    mo.stop(not run_button.value)
+
+    # Example protein sequences from UniRef
+    protein_sequences = sample_sequences(
+        uniref_ds,
+        num_seqs=choose_num_seqs.value,
+        len_down=choose_len_down.value,
+        len_up=choose_len_up.value,
+    )
+
+    # Load the ESM-2 model and tokenizer
+    model_name_first = choose_model.value
+    tokenizer_first = EsmTokenizer.from_pretrained(model_name_first)
+    model_first = EsmForMaskedLM.from_pretrained(model_name_first)
+
+    # Send to device in eval mode
+    model_first.to(device)
+    model_first.eval()
+
+    # Create a dictionary to store pre- and post-norm activations
+    def norm_hook(layer_name, activation_dict):
+        def hook(
+            module,
+            inputs,
+            output,
+        ):
+            if layer_name in activation_dict:
+                _before = activation_dict[layer_name]["before"]
+                _after = activation_dict[layer_name]["after"]
+                activation_dict[layer_name] = {
+                    "before": _before + [inputs[0].detach().cpu()],
+                    "after": _after + [output.detach().cpu()],
+                }
+            else:
+                activation_dict[layer_name] = {
+                    "before": [inputs[0].detach().cpu()],
+                    "after": [output.detach().cpu()],
+                }
+
+        return hook
+
+    activations = {}
+    for _name, _module in model_first.named_modules():
+        if isinstance(_module, nn.LayerNorm) and "lm_head" not in _name:
+            _module.register_forward_hook(norm_hook(_name, activations))
+
+    # Forward pass through the model
+    with torch.inference_mode():
+        for _protein_sequence in protein_sequences:
+            _input = tokenizer_first(_protein_sequence, return_tensors="pt").to(device)
+            model_first(_input["input_ids"])
+    return (activations,)
+
+
+@app.cell
+def _(activations):
+    n_layers = int((len(activations) - 1) / 2 + 1)
+    choose_layer = mo.ui.slider(
+        start=0,
+        stop=n_layers - 1,
+        step=1,
+        value=0,
+        show_value=True,
+        full_width=True,
+    )
+    return (choose_layer,)
+
+
+@app.cell
+def _(choose_layer):
+    mo.vstack([mo.md("Choose layer to plot"), choose_layer])
+    return
+
+
+@app.cell
+def _(choose_layer):
+    selected_layer = int(choose_layer.value)
+    return (selected_layer,)
+
+
+@app.cell
+def _(activations, selected_layer):
+    create_figure_first(activations, selected_layer)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    We indeed see, that the shapes produced often end up forming a logistic function. The same observation in other models led the authors of the publication to propose a simpler alternative to the Normalization layer. Since the function seems to just reduce to simple $\tanh$, they propose to use
 
     $$
     DyT(\boldsymbol{x}) = \boldsymbol{\gamma} * \tanh(\alpha\boldsymbol{x})+\boldsymbol{\beta},
     $$
 
-    where $\boldsymbol{\gamma}$ and $\boldsymbol{\beta}$ are vectors of weigths with the dimension $|\boldsymbol{x}|$, and $\alpha$ a simple scalar. Now we will take the original model, and replace all the normalization layers with this $DyT$ layer, and train it from scratch. In order to make sure that our training is well done, we will also retrain the orignal model with standard LN normalizaiton layer.
+    where $\boldsymbol{\gamma}$ and $\boldsymbol{\beta}$ are vectors of weights with the dimension $|\boldsymbol{x}|$, and $\alpha$ a simple scalar. They refer to the layer as the DyT layer. Very surprisingly this layer seems to perform as well as a full normalization layer in many examples that they checked.
+
+    ## <center> Training of ESM with DyT layer </center>
+    ---
+
+    In order to see this for ourselves, the notebook allows us to test this idea in the ESM protein model. Due to computational constraints we limit ourselves to a model with 8M parameters. Then we replace all the Normalization layers with the new $DyT$ layer, and retrain it from scratch. In order to make sure that our training is well done, we will also retrain the original model with standard LN normalization layer.
     """)
     return
 
@@ -62,7 +238,7 @@ def _():
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    This is a considerably more chalenging computation, so we encurage the user to switch to the cuda kernel, offered by the **molab**. If the krnel was chosen succesfully, the next line should print out: " *Device used: 'cuda'* "
+    This computation is quite heavy, so we encourage the user to switch to the cuda kernel, offered by the **molab**. If the kernel was chosen successfully, the next line should print out: " *Device used: 'cuda'* "
     """)
     return
 
@@ -77,7 +253,7 @@ def _():
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    Now that we checked what kernel we are using (we reccomend cuda), we reload the orignal model, and initialise all the weights to random values.
+    Now that we checked what kernel we are using (we recommend cuda), we reload the original model, and initialize all the weights to random values. In the window below, you can inspect the structure of the model in detail.
     """)
     return
 
@@ -89,7 +265,7 @@ def _(device):
 
     # the same tokenizer as before
     tokenizer = EsmTokenizer.from_pretrained(model_name)
-    # Now we load only the blueprint (sceleton) of the model, and put random weights
+    # Now we load only the blueprint (skeleton) of the model, and put random weights
     config = EsmConfig.from_pretrained(model_name)
     model = EsmForMaskedLM(config)
 
@@ -102,7 +278,7 @@ def _(device):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    In `pytorch` the layers can be easily replaced. First we define a new `DyT` layer class, and initialise the value of $\alpha_0=10.0$. The training is very sensitive to $\alpha_0$. Values like $\alpha_0=\{0.1, 0.5, 1.0\}$ significantly underperform the original model. The notebook allows you to play with different values by using the input window below. Once the `DyT` class is constructed, we define a function that runs through all the layers, and replaces all instances of `nn.LayerNorm` by `DyT`. Here we have to make sure that the dimension of features stays the same.
+    In `pytorch` the layers can be easily replaced. First we define a new `DyT` layer class, and initialize the value of $\alpha_0=10.0$. The training is very sensitive to $\alpha_0$. Values like $\alpha_0=\{0.1, 0.5, 1.0\}$ significantly underperform the original model. The notebook allows you to play with different values by using the input window below. Once the `DyT` class is constructed, we define a function that goes through all the layers, and replaces all instances of `nn.LayerNorm` by `DyT`. The function makes sure that the dimension of features stays the same as in the original model.
     """)
     return
 
@@ -149,40 +325,6 @@ def _():
     return
 
 
-@app.class_definition
-class DyT(nn.Module):
-    def __init__(self, num_features, alpha_init_value=10.0):
-        super().__init__()
-        self.alpha = nn.Parameter(torch.ones(1) * alpha_init_value)
-        self.weight = nn.Parameter(torch.ones(num_features))
-        self.bias = nn.Parameter(torch.zeros(num_features))
-
-    def forward(self, x):
-        x = torch.tanh(self.alpha * x)
-        return x * self.weight + self.bias
-
-
-@app.function
-def replace_layernorm_with_dyt(module: nn.Module, alpha: float = 10.0) -> None:
-    """
-    Recursively searches a PyTorch model for nn.LayerNorm modules
-    and replaces them with the custom DyT layer.
-    """
-    for name, child in module.named_children():
-        # If the child is a LayerNorm, replace it
-        if isinstance(child, nn.LayerNorm):
-            # ESM2 LayerNorms use a tuple for normalized_shape, e.g., (320,)
-            # We extract the integer size to pass to your num_features
-            num_features = child.normalized_shape[0]
-
-            # Create your custom layer and swap it in
-            custom_layer = DyT(num_features=num_features, alpha_init_value=alpha)
-            setattr(module, name, custom_layer)
-        else:
-            # If it's not a LayerNorm, dig deeper into this child
-            replace_layernorm_with_dyt(child, alpha=alpha)
-
-
 @app.cell
 def _():
     parameter_alpha = mo.ui.number(
@@ -195,6 +337,14 @@ def _():
     return (parameter_alpha,)
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Now we apply the function, and you can see that below all the Normalization layers are now replaced by DyT.
+    """)
+    return
+
+
 @app.cell
 def _(device, model, parameter_alpha):
     model_new = copy.deepcopy(model)
@@ -202,44 +352,6 @@ def _(device, model, parameter_alpha):
     model_new.to(device)
     model_new.eval()
     return (model_new,)
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    Just as before, we load the data, in a format useful for the training.
-    """)
-    return
-
-
-@app.class_definition
-class StreamingUniRefDataset(IterableDataset):
-    def __init__(self, tokenizer, split="train", max_length=1024, seed=1):
-        self.tokenizer = tokenizer
-        self.split: str = split
-        self.max_length: int = max_length
-        self.seed: int = seed
-        self.uniref_ds = load_dataset(
-            "agemagician/uniref30", split=split, streaming=True
-        ).shuffle(seed=seed)
-
-    def __iter__(self):
-        # Setting a seed helps keep the split consistent during a single training run
-        random.seed(self.seed)
-
-        for x in self.uniref_ds:
-            protein_sequence = x["text"]
-
-            # Process and yield the sequence
-            encoding = self.tokenizer(
-                protein_sequence,
-                truncation=True,
-                max_length=self.max_length,
-                padding="max_length",
-                return_tensors="pt",
-            )
-
-            yield {key: val.squeeze(0) for key, val in encoding.items()}
 
 
 @app.cell
@@ -263,7 +375,7 @@ def _(tokenizer):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    Now we can start the training. First of the original model, and then with the new model. In order to start the training press the button. Using the 'cuda' kernel offered by **molab** the training of each model should take about a minute. All the parameters, except for the learning rate were kept the same, while the learnign rate equals to 1e-4 in the model with LN and 4e-4 in the model with DyT.
+    Now we can start the training. First, the original model, and then with the new model. The training loss along the training of the original model is already precomputed, and displayed below, for your convenience. **In order to start the training press the button.** Using the 'cuda' kernel offered by **molab** the training of each model should take about a minute. All the parameters, except for the learning rate were kept the same, while the learning rate equals to 1e-4 in the model with LN and 4e-4 in the model with DyT.
     """)
     return
 
@@ -379,7 +491,7 @@ def _(eval_dataset, model_new, tokenizer, train_dataset, train_new_button):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    Now we can visualise the Evaluation and Training loss along the optimization, and we see that both models reach the same precition. The precision reached is comparable to the precision of the original model, trained by meta.
+    Visualization of the Evaluation and Training loss along the optimization. The precision reached is comparable to the precision of the original model, trained by Meta.
     """)
     return
 
@@ -497,28 +609,154 @@ def _(
             train_steps_new,
             train_loss_new,
             "--.",
-            label="Training (Tanh)",
+            label="Training (DyT)",
             color="darkred",
         )
         plt.plot(
             eval_steps_new,
             eval_loss_new,
             "--x",
-            label="Evaluation (Tanh)",
+            label="Evaluation (DyT)",
             color="grey",
         )
 
     plt.plot([0, 100], [og_prec] * 2, "--", linewidth=1, color="black")
     plt.text(1, og_prec + 0.04, "OG precision", fontsize=sizef)
 
-    plt.xlabel("Training Steps (Tanh)", fontsize=sizef)
+    plt.xlabel("Training Steps (DyT)", fontsize=sizef)
     plt.ylabel("Loss", fontsize=sizef)
     plt.title(
         f"Training and Evaluation Loss Comparison, $\\alpha =$ {parameter_alpha.value}",
         fontsize=sizef,
     )
-    plt.legend(fontsize=sizef, frameon=False)
+    plt.legend(fontsize=sizef, frameon=False, loc='upper right')
     return
+
+
+@app.function(hide_code=True)
+def sample_sequences(dataset, num_seqs: int, len_down: int, len_up: int):
+    results = []
+    for x in dataset:
+        seq = x["text"]
+        L = len(seq)
+        if L >= len_down and L <= len_up:
+            results.append(seq)
+        if len(results) >= num_seqs:
+            break
+    return results
+
+
+@app.function(hide_code=True)
+def create_figure_first(activations, selected_layer):
+    _n_layers = (len(activations) - 1) / 2 + 1
+    if selected_layer < _n_layers - 1:
+        selected_keys = [_ for _ in activations.keys() if str(selected_layer) in _]
+        n_cols = 2
+        figsize = (5.5 * n_cols, 4.2)
+        fig, ax = plt.subplots(1, n_cols, figsize=figsize, constrained_layout=True)
+        axes = ax.flatten()
+    else:
+        selected_keys = [_ for _ in activations.keys() if "emb_layer_norm_after" in _]
+        n_cols = 1
+        figsize = (5.5 * n_cols, 4.2)
+        fig, ax = plt.subplots(1, n_cols, figsize=figsize, constrained_layout=True)
+        axes = [ax]
+
+    for _name, ax in zip(selected_keys, axes):
+        before_tensors = activations[_name]["before"]
+        after_tensors = activations[_name]["after"]
+
+        # Concatenate all proteins' activation tensors (which may have different lengths)
+        before_flat = torch.cat([t.flatten() for t in before_tensors]).numpy()
+        after_flat = torch.cat([t.flatten() for t in after_tensors]).numpy()
+
+        # Use hist2d with LogNorm for fast, high-density visualization
+        h = ax.hist2d(
+            before_flat,
+            after_flat,
+            bins=100,
+            norm=LogNorm(),
+            cmap="viridis",
+        )
+
+        # Add colorbar for each layer's heatmap
+        fig.colorbar(h[3], ax=ax, fraction=0.046, pad=0.04)
+
+        # Clean name for title to make it readable
+        clean_name = (
+            _name.replace("esm2.encoder.layer.", "Layer ")
+            .replace(".attention.LayerNorm", " Attn LN")
+            .replace(".LayerNorm", " LN")
+        )
+        ax.set_title(clean_name, fontsize=11, fontweight="bold")
+        ax.set_xlabel("Before LayerNorm (Input)", fontsize=9)
+        ax.set_ylabel("After LayerNorm (Output)", fontsize=9)
+        ax.grid(True, linestyle="--", alpha=0.5)
+    return fig
+
+
+@app.class_definition(hide_code=True)
+class DyT(nn.Module):
+    def __init__(self, num_features, alpha_init_value=10.0):
+        super().__init__()
+        self.alpha = nn.Parameter(torch.ones(1) * alpha_init_value)
+        self.weight = nn.Parameter(torch.ones(num_features))
+        self.bias = nn.Parameter(torch.zeros(num_features))
+
+    def forward(self, x):
+        x = torch.tanh(self.alpha * x)
+        return x * self.weight + self.bias
+
+
+@app.function(hide_code=True)
+def replace_layernorm_with_dyt(module: nn.Module, alpha: float = 10.0) -> None:
+    """
+    Recursively searches a PyTorch model for nn.LayerNorm modules
+    and replaces them with the custom DyT layer.
+    """
+    for name, child in module.named_children():
+        # If the child is a LayerNorm, replace it
+        if isinstance(child, nn.LayerNorm):
+            # ESM2 LayerNorms use a tuple for normalized_shape, e.g., (320,)
+            # We extract the integer size to pass to your num_features
+            num_features = child.normalized_shape[0]
+
+            # Create your custom layer and swap it in
+            custom_layer = DyT(num_features=num_features, alpha_init_value=alpha)
+            setattr(module, name, custom_layer)
+        else:
+            # If it's not a LayerNorm, dig deeper into this child
+            replace_layernorm_with_dyt(child, alpha=alpha)
+
+
+@app.class_definition(hide_code=True)
+class StreamingUniRefDataset(IterableDataset):
+    def __init__(self, tokenizer, split="train", max_length=1024, seed=1):
+        self.tokenizer = tokenizer
+        self.split: str = split
+        self.max_length: int = max_length
+        self.seed: int = seed
+        self.uniref_ds = load_dataset(
+            "agemagician/uniref30", split=split, streaming=True
+        ).shuffle(seed=seed)
+
+    def __iter__(self):
+        # Setting a seed helps keep the split consistent during a single training run
+        random.seed(self.seed)
+
+        for x in self.uniref_ds:
+            protein_sequence = x["text"]
+
+            # Process and yield the sequence
+            encoding = self.tokenizer(
+                protein_sequence,
+                truncation=True,
+                max_length=self.max_length,
+                padding="max_length",
+                return_tensors="pt",
+            )
+
+            yield {key: val.squeeze(0) for key, val in encoding.items()}
 
 
 @app.cell(hide_code=True)
